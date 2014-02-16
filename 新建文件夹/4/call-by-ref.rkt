@@ -127,6 +127,7 @@
    (num number?))
   (const2-exp
    (bool symbol?))
+  
   (emptylist)
   (construct-exp
    (exp1 expression?)
@@ -135,6 +136,13 @@
    (exp1 expression?))
   (cdr-exp
    (exp1 expression?))
+  (setcar-exp
+   (exp1 expression?)
+   (exp2 expression?))
+  (setcdr-exp
+   (exp1 expression?)
+   (exp2 expression?))
+  
   (null?-exp
    (exp1 expression?))
   (list-exp
@@ -248,7 +256,7 @@
 ;;scan-parse
 (define scanner-spec
   '((white-sp (whitespace) skip)
-    (comment (";" (arbno (not #\newline))) skip)
+    (comment ("%" (arbno (not #\newline))) skip)
     (identifier (letter (arbno (or letter digit))) symbol)
     ;    (boolean ("#" (or "t" "f")) symbol) 
     (number ((or "" "-") digit (arbno digit)) number)))
@@ -325,6 +333,7 @@
     (expression
      ("<?" "(" expression "," expression ")")
      less?-exp)
+    
     (expression
      ("emptylist")
      emptylist)
@@ -337,6 +346,13 @@
     (expression
      ("cdr" "(" expression ")")
      cdr-exp)
+    (expression
+     ("setcar!" "(" expression "," expression ")")
+     setcar-exp)
+    (expression
+     ("setcdr!" "(" expression "," expression ")")
+     setcdr-exp)
+    
     (expression
      ("list" "(" (separated-list expression ",") ")")
      list-exp)
@@ -385,7 +401,9 @@
   (proc-val
    (proc proc?))
   (ref-val
-   (ref reference?)))
+   (ref reference?))
+  (mutpair-val
+   (pair mutpair?)))
 (define expval->num
   (lambda (val)
     (cases expval val
@@ -401,11 +419,16 @@
     (cases expval val
       (proc-val (proc) proc)
       (else (report-expval-extractor-error 'proc val)))))
+(define expval->mutpair
+  (lambda (val)
+    (cases expval val
+      (mutpair-val (pair) pair)
+      (else (report-expval-extractor-error 'mutpair val)))))
 (define expval->ref
   (lambda (val)
     (cases expval val
       (ref-val (ref) ref)
-      (else (report-expval-extractor-error 'proc val)))))
+      (else (report-expval-extractor-error 'ref val)))))
 
 
 (define report-expval-extractor-error 
@@ -417,16 +440,7 @@
    (body expression?)
    (saved-nameless-env nameless-environment?)))
 
-;old cons
-;(define cons-accept?
-;  (lambda (x)
-;    (or (lst-exp? x)
-;        (expval? x))))          
-;(define-datatype lst-exp lst-exp?
-;  (null-exp)
-;  (cons-exp
-;   (first cons-accept?)
-;   (second cons-accept?)))
+
 
 (define-datatype mutpair mutpair?
   (a-pair
@@ -447,7 +461,15 @@
       (a-pair (left-loc right-loc)
               (deref right-loc)))))
 (define setleft
-  (lambda (
+  (lambda (p val)
+    (cases mutpair p
+      (a-pair (left-loc right-loc)
+              (setref! left-loc val)))))
+(define setright
+  (lambda (p val)
+    (cases mutpair p
+      (a-pair (left-loc right-loc)
+              (setref! right-loc val)))))
 
 ;;转换
 (define translation-of
@@ -457,6 +479,7 @@
       (const2-exp (bool) (const2-exp bool))
       (var-exp (var) (nameless-var-exp
                       (apply-senv senv var)))
+      
       (construct-exp (exp1 exp2)
                      (construct-exp (translation-of exp1 senv)
                                     (translation-of exp2 senv)))
@@ -466,10 +489,20 @@
                (car-exp (translation-of exp1 senv)))
       (cdr-exp (exp1)
                (cdr-exp (translation-of exp1 senv)))
+      (setcar-exp (exp1 exp2)
+                  (setcar-exp (translation-of exp1 senv)
+                              (translation-of exp2 senv)))
+      (setcdr-exp (exp1 exp2)
+                  (setcdr-exp (translation-of exp1 senv)
+                              (translation-of exp2 senv)))
+      
+      
       (list-exp (exps)
                 (list-exp (map (lambda (exp) (translation-of exp senv)) exps)))
       (null?-exp (exp1)
                  (null?-exp (translation-of exp1 senv)))
+      
+      
       (diff-exp (exp1 exp2)
                 (diff-exp (translation-of exp1 senv)
                           (translation-of exp2 senv)))
@@ -574,30 +607,37 @@
       (construct-exp (exp1 exp2)
                      (let ((val1 (value-of exp1 nameless-env))
                            (val2 (value-of exp2 nameless-env)))
-                       (cons-exp val1 val2)))
-      (emptylist ()
-                 (null-exp))
+                       (mutpair-val (make-pair val1 val2))))
       (car-exp (exp1)
                (let ((val1 (value-of exp1 nameless-env)))
-                 (cases lst-exp val1
-                   (cons-exp (exp exp2)
-                             exp)
-                   (else (eopl:error 'car "input are emptylst ~s" exp1)))))
+                 (let ((p1 (expval->mutpair val1)))
+                   (left p1))))
+      
       (cdr-exp (exp1)
                (let ((val1 (value-of exp1 nameless-env)))
-                 (cases lst-exp val1
-                   (cons-exp (exp exp2)
-                             exp2)
-                   (else (eopl:error 'car "input are emptylst ~s" exp1)))))
-      (list-exp (exps)
-                (list->cons exps nameless-env))
-      (null?-exp (exp1)
-                 (let ((val1 (value-of exp1 nameless-env)))
-                   (cases lst-exp val1
-                     (null-exp () 
-                               (bool-val #t))
-                     (cons-exp (exp exp2)
-                               (bool-val #f))))) 
+                 (let ((p1 (expval->mutpair val1)))
+                   (right p1))))
+      (setcar-exp (exp1 exp2)
+                  (let ((val1 (value-of exp1 nameless-env))
+                        (val2 (value-of exp2 nameless-env)))
+                    (let ((p (expval->mutpair val1)))
+                      (begin (setleft p val2)
+                             (num-val 43)))))
+      (setcdr-exp (exp1 exp2)
+                  (let ((val1 (value-of exp1 nameless-env))
+                        (val2 (value-of exp2 nameless-env)))
+                    (let ((p (expval->mutpair val1)))
+                      (begin (setright p val2)
+                             (num-val 44)))))
+;      (list-exp (exps)
+;                (list->cons exps nameless-env))
+;      (null?-exp (exp1)
+;                 (let ((val1 (value-of exp1 nameless-env)))
+;                   (cases lst-exp val1
+;                     (null-exp () 
+;                               (bool-val #t))
+;                     (cons-exp (exp exp2)
+;                               (bool-val #f))))) 
       (diff-exp (exp1 exp2)
                 (let ((val1 (value-of exp1 nameless-env))
                       (val2 (value-of exp2 nameless-env)))
@@ -709,12 +749,12 @@
 
 
 ;;value-of help func
-(define list->cons
-  (lambda (exps nameless-env)
-    (if (null? exps)
-        (null-exp)
-        (cons-exp (value-of (car exps) nameless-env)
-                  (list->cons (cdr exps) nameless-env)))))
+;(define list->cons
+;  (lambda (exps nameless-env)
+;    (if (null? exps)
+;        (null-exp)
+;        (cons-exp (value-of (car exps) nameless-env)
+;                  (list->cons (cdr exps) nameless-env)))))
 (define cond->val
   (lambda (exps1 exps2 nameless-env)
     (if (null? exps1)
@@ -768,7 +808,17 @@
   (lambda (body rands nameless-env old-env)
     (if (null? rands)
         (value-of body old-env)
-        (apply-proc-help body (cdr rands) nameless-env (extend-nameless-env (newref (value-of (car rands) nameless-env)) old-env)))))
+        (apply-proc-help body 
+                         (cdr rands) 
+                         nameless-env 
+                         (extend-nameless-env (operand-val (car rands) nameless-env)
+                                              old-env)))))
+(define operand-val
+  (lambda (exp nameless-env)
+    (cases expression exp
+      (nameless-var-exp (n) 
+                         (apply-nameless-env nameless-env n))                 
+      (else (newref (value-of exp nameless-env))))))
 ;;exercise3.23 fact
 (define fact
   "let facthelper = proc (facthelp)
