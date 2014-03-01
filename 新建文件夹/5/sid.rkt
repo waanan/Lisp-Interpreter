@@ -68,6 +68,8 @@
    (exp1 expression?))
   (cdr-exp 
    (exp1 expression?))
+  (list-exp
+   (exps (list-of expression?)))
   
   (diff-exp
    (exp1 expression?)
@@ -81,8 +83,8 @@
   (var-exp
    (var symbol?))
   (let-exp
-   (var symbol?)
-   (exp expression?)
+   (vars (list-of symbol?))
+   (exps (list-of expression?))
    (body expression?))
   (letrec-exp 
    (p-name symbol?)
@@ -112,12 +114,19 @@
    (cont continuation?))
   (cdr-cont
    (cont continuation?))
-  
+  (list-cont
+   (epxvals (list-of expval?))
+   (exps (list-of expression?))
+   (env environment?)
+   (cont continuation?))
   (zero1-cont
    (cont continuation?))
   (let-exp-cont
    (var symbol?)
+   (vars (list-of symbol?))
+   (exps (list-of expression?))
    (body expression?)
+   (const-env environment?)
    (env environment?)
    (cont continuation?))
   (if-test-cont
@@ -170,15 +179,27 @@
                     (null-val ()
                               (eopl:error "list is null ~s" 'cdr-exp)) 
                     (cons-val (val1 val2)
-                              (apply-cont saved-cont val2)))))       
+                              (apply-cont saved-cont val2))))) 
+      (list-cont (expvals exps env saved-cont)
+                 (if (null? exps)
+                     (apply-cont saved-cont (list-help expvals))
+                     (value-of/k (car exps) env (list-cont (cons val expvals) (cdr exps) env saved-cont))))
+                     
       
       (zero1-cont (saved-cont)
                   (apply-cont saved-cont 
                               (bool-val (= (expval->num val) 0))))
-      (let-exp-cont (var body saved-env saved-cont)
-                    (value-of/k body
+      (let-exp-cont (var vars exps body const-env saved-env saved-cont)
+                    (if (null? vars)
+                        (value-of/k body
                                 (extend-env var val saved-env)
-                                saved-cont))
+                                saved-cont)
+                        (value-of/k (car exps)
+                                    const-env
+                                    (let-exp-cont (car vars) (cdr vars) (cdr exps) body 
+                                                  const-env
+                                                  (extend-env var val saved-env)
+                                                  saved-cont))))
       (if-test-cont (exp2 exp3 saved-env saved-cont)
                     (if (expval->bool val)
                         (value-of/k exp2 saved-env saved-cont)
@@ -196,8 +217,19 @@
       (rand-cont (val1 cont)
                  (let ((proc1 (expval->proc val1)))
                    (apply-procedure/k proc1 val cont))))))
-
+;;help-function
+(define list-iter
+  (lambda (expvals result)
+    (if (null? expvals)
+        result
+        (list-iter (cdr expvals) (ls-val (cons-val (car expvals) result)))))) 
+(define list-help
+  (lambda (expvals)
+    (list-iter expvals (ls-val (null-val)))))
     
+    
+
+
 (define scanner-spec
   '((white-sp (whitespace) skip)
     (comment ("%" (arbno (not #\newline))) skip)
@@ -230,6 +262,9 @@
     (expression
      ("cdr" "(" expression")")
      cdr-exp)
+    (expression
+     ("list" "(" (separated-list expression ",") ")")
+     list-exp)
     
     (expression
      ("-" "(" expression "," expression ")")
@@ -243,9 +278,11 @@
     (expression
      ("if" expression "then" expression "else" expression)
      if-exp)
+    
     (expression
-     ("let" identifier "=" expression "in" expression)
+     ("let" (arbno identifier "=" expression) "in" expression)
      let-exp)
+    
     (expression
      ("letrec" identifier "(" (arbno identifier) ")" "=" expression "in" expression)
      letrec-exp)
@@ -336,6 +373,12 @@
       (cdr-exp (exp1)
                (value-of/k exp1 env (cdr-cont cont))) 
       
+      (list-exp (exps)
+                (if (null? exps)
+                    (apply-cont cont (ls-val (null-val)))
+                    (value-of/k (car exps) env (list-cont '() (cdr exps) env cont))))
+                 
+      
       (var-exp (var) (apply-cont cont (apply-env env var)))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
@@ -346,9 +389,11 @@
       (if-exp (exp1 exp2 exp3)
               (value-of/k exp1 env
                           (if-test-cont exp2 exp3 env cont)))
-      (let-exp (var exp body)
-               (value-of/k exp env 
-                         (let-exp-cont var body env cont)))
+      (let-exp (vars exps body)
+               (if (null? vars)
+                   (apply-cont cont body)
+                   (value-of/k (car exps) env 
+                         (let-exp-cont (car vars) vars exps body env env cont))))
       (letrec-exp (p-name b-vars body letrec-body)
                   (value-of/k
                    letrec-body 
