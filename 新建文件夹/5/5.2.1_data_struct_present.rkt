@@ -118,7 +118,7 @@
       (end-cont ()
                 (begin 
                   (eopl:printf "End of computation.~%")
-                  val))
+                  (val-bounce val)))
       (zero1-cont (saved-cont)
                   (apply-cont saved-cont 
                               (bool-val (= (expval->num val) 0))))
@@ -223,6 +223,19 @@
    (body expression?)
    (saved-env environment?)))
 
+(define trampoline
+  (lambda (bou)
+    (cases bounce bou 
+      (val-bounce (val)
+                  val)
+      (bou-bounce (bou)
+        (trampoline (bou))))))
+(define-datatype bounce bounce?
+  (val-bounce
+   (val expval?))
+  (bou-bounce
+   (bou (not expval?))))
+
 (define run
   (lambda (string)
     (value-of-program (scan&parse string))))
@@ -230,7 +243,8 @@
   (lambda (pgm)
     (cases program pgm
       (a-program (exp1)
-                 (value-of/k exp1 (init-env) (end-cont))))))
+                 (trampoline
+                  (value-of/k exp1 (init-env) (end-cont)))))))
 (define value-of/k
   (lambda (exp env cont)
     (cases expression exp
@@ -264,12 +278,13 @@
                             (rator-cont rand env cont))))))
 (define apply-procedure/k
   (lambda (proc1 val cont)
-    (cases proc proc1
-      (procedure (var body saved-env)
-                 (value-of/k body 
-                             (extend-env var val saved-env)
-                             cont)))))
-
+    (bou-bounce (lambda ()
+                  (cases proc proc1
+                    (procedure (var body saved-env)
+                               (value-of/k body 
+                                           (extend-env var val saved-env)
+                                           cont)))))))
+  
 
 
 

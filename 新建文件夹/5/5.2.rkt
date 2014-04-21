@@ -223,6 +223,12 @@
    (body expression?)
    (saved-env environment?)))
 
+(define trampoline
+  (lambda (bounce)
+    (if (expval? bounce)
+        bounce
+        (trampoline (bounce)))))
+
 (define run
   (lambda (string)
     (value-of-program (scan&parse string))))
@@ -230,7 +236,8 @@
   (lambda (pgm)
     (cases program pgm
       (a-program (exp1)
-                 (value-of/k exp1 (init-env) (end-cont))))))
+                 (trampoline
+                  (value-of/k exp1 (init-env) (end-cont)))))))
 (define value-of/k
   (lambda (exp env cont)
     (cases expression exp
@@ -264,11 +271,12 @@
                             (rator-cont rand env cont))))))
 (define apply-procedure/k
   (lambda (proc1 val cont)
-    (cases proc proc1
-      (procedure (var body saved-env)
-                 (value-of/k body 
-                             (extend-env var val saved-env)
-                             cont)))))
+    (lambda ()
+      (cases proc proc1
+        (procedure (var body saved-env)
+                   (value-of/k body 
+                               (extend-env var val saved-env)
+                               cont))))))
 
 
 

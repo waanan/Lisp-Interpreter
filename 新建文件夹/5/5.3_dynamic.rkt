@@ -1,4 +1,11 @@
 #lang eopl
+(define exp 'uninitialized)
+(define env 'uninitialized)
+(define cont 'uninitialized)
+(define val 'uninitialized)
+(define proc1 'uninitialized)
+(define pc 'unintialized)
+
 (define-datatype environment environment?
   (empty-env)
   (extend-env
@@ -7,7 +14,7 @@
    (env environment?))
   (extend-env-rec
    (p-name symbol?)
-   (b-vars (list-of symbol?))
+   (b-vars symbol?)
    (body expression?)
    (env environment?)))
 
@@ -74,7 +81,7 @@
    (body expression?))
   (letrec-exp 
    (p-name symbol?)
-   (b-vars (list-of symbol?))
+   (b-vars symbol?)
    (body expression?)
    (letrec-body expression?))
   (proc-exp 
@@ -113,36 +120,49 @@
    (val1 expval?)
    (cont continuation?)))
 (define apply-cont
-  (lambda (cont val)
+  (lambda ()
     (cases continuation cont
       (end-cont ()
                 (begin 
                   (eopl:printf "End of computation.~%")
-                  val))
+                  (set! pc #f)))
       (zero1-cont (saved-cont)
-                  (apply-cont saved-cont 
-                              (bool-val (= (expval->num val) 0))))
+                  (set! cont saved-cont)
+                  (set! val (bool-val (= (expval->num val) 0)))
+                  (apply-cont))  
       (let-exp-cont (var body saved-env saved-cont)
-                    (value-of/k body
-                                (extend-env var val saved-env)
-                                saved-cont))
+                    (set! cont saved-cont)
+                    (set! env (extend-env var val saved-env))
+                    (set! exp body)
+                    (value-of/k)) 
       (if-test-cont (exp2 exp3 saved-env saved-cont)
+                    (set! cont saved-cont)
+                    (set! env saved-env)              
                     (if (expval->bool val)
-                        (value-of/k exp2 saved-env saved-cont)
-                        (value-of/k exp3 saved-env saved-cont) ))
-      (diff1-cont (exp2 env cont)
-                  (value-of/k exp2 env (diff2-cont val cont)))
-      (diff2-cont (val1 cont)
+                        (set! exp exp2)
+                        (set! exp exp3))
+                        (value-of/k))
+      (diff1-cont (exp2 saved-env saved-cont)
+                  (set! exp exp2)
+                  (set! env saved-env)
+                  (set! cont (diff2-cont val saved-cont))
+                  (value-of/k))
+      (diff2-cont (val1 saved-cont)
                   (let ((num1 (expval->num val1))
                         (num2 (expval->num val)))
-                    (apply-cont cont
-                                (num-val (- num1 num2)))))
-      (rator-cont (rand env cont)
-                  (value-of/k rand env
-                            (rand-cont val cont)))
-      (rand-cont (val1 cont)
-                 (let ((proc1 (expval->proc val1)))
-                   (apply-procedure/k proc1 val cont))))))
+                    (set! cont saved-cont)
+                    (set! val (num-val (- num1 num2)))
+                    (apply-cont)))
+      (rator-cont (rand saved-env saved-cont)
+                  (set! env saved-env)
+                  (set! cont (rand-cont val saved-cont))
+                  (set! exp rand)
+                  (value-of/k))                      
+      (rand-cont (val1 saved-cont)
+                 (let ((proc (expval->proc val1)))
+                   (set! proc1 proc)
+                   (set! cont saved-cont)
+                   (set! pc apply-procedure/k))))))
 
     
 (define scanner-spec
@@ -177,13 +197,13 @@
      ("let" identifier "=" expression "in" expression)
      let-exp)
     (expression
-     ("letrec" identifier "(" (arbno identifier) ")" "=" expression "in" expression)
+     ("letrec" identifier "(" identifier ")" "=" expression "in" expression)
      letrec-exp)
     (expression
-     ("proc" "(" (separated-list identifier ",") ")" expression)
+     ("proc" "(" identifier ")" expression)
      proc-exp)
     (expression
-     ("(" expression (arbno expression) ")")
+     ("(" expression expression")")
      call-exp)))
 (define just-scan
   (sllgen:make-string-scanner scanner-spec grammar))
@@ -219,10 +239,16 @@
   
 (define-datatype proc proc?
   (procedure
-   (vars (list-of symbol?))
-   (body expression?)
-   (saved-env environment?)))
+   (vars symbol?)
+   (body expression?)))
 
+(define trampoline 
+  (lambda ()
+    (if pc
+        (begin
+          (pc)
+          (trampoline))
+        val)))
 (define run
   (lambda (string)
     (value-of-program (scan&parse string))))
@@ -230,45 +256,59 @@
   (lambda (pgm)
     (cases program pgm
       (a-program (exp1)
-                 (value-of/k exp1 (init-env) (end-cont))))))
+                 (set! cont (end-cont))
+                 (set! env (init-env))
+                 (set! exp exp1)
+                 (value-of/k)
+                 (trampoline)))))
 (define value-of/k
-  (lambda (exp env cont)
+  (lambda ()
     (cases expression exp
-      (const1-exp (num) (apply-cont cont (num-val num)))
-      (const2-exp (bool) (apply-cont cont
-                                     (if (eq? bool 't)
-                                         (bool-val #t)
-                                         (bool-val #f))))
-      (var-exp (var) (apply-cont cont (apply-env env var)))
+      (const1-exp (num) 
+                  (set! val (num-val num))
+                  (apply-cont))
+      (const2-exp (bool) 
+                  (set! val (if (eq? bool 't)
+                                (bool-val #t)
+                                (bool-val #f)))
+                  (apply-cont))
+      (var-exp (var) 
+               (set! val (apply-env env var))
+               (apply-cont))
       (diff-exp (exp1 exp2)
-                (value-of/k exp1 env 
-                          (diff1-cont exp2 env cont)))
+                (set! cont (diff1-cont exp2 env cont))
+                (set! exp exp1)
+                (value-of/k))
       (zero?-exp (exp1)
-                 (value-of/k exp1 env
-                             (zero1-cont cont)))
+                 (set! cont (zero1-cont cont))
+                 (set! exp exp1)
+                 (value-of/k))
       (if-exp (exp1 exp2 exp3)
-              (value-of/k exp1 env
-                          (if-test-cont exp2 exp3 env cont)))
-      (let-exp (var exp body)
-               (value-of/k exp env 
-                         (let-exp-cont var body env cont)))
+              (set! cont (if-test-cont exp2 exp3 env cont))
+              (set! exp exp1)
+              (value-of/k))                          
+      (let-exp (var exp1 body)
+               (set! cont (let-exp-cont var body env cont))
+               (set! exp exp1)
+               (value-of/k))
       (letrec-exp (p-name b-vars body letrec-body)
-                  (value-of/k
-                   letrec-body 
-                   (extend-env-rec p-name b-vars body env)
-                   cont))
+                  (set! exp letrec-body)
+                  (set! env (extend-env-rec p-name b-vars body env))
+                  (value-of/k))
       (proc-exp (vars body)
-                (apply-cont cont (proc-val (procedure vars body env))))
+                (set! val (proc-val (procedure vars body)))
+                (apply-cont))
       (call-exp (rator rand)
-                (value-of/k rator env
-                            (rator-cont rand env cont))))))
+                (set! cont (rator-cont rand env cont))
+                (set! exp rator)
+                (value-of/k)))))
 (define apply-procedure/k
-  (lambda (proc1 val cont)
+  (lambda ()
     (cases proc proc1
-      (procedure (var body saved-env)
-                 (value-of/k body 
-                             (extend-env var val saved-env)
-                             cont)))))
+      (procedure (var body)
+                 (set! env (extend-env var val env))
+                 (set! exp body)
+                 (value-of/k)))))
 
 
 
