@@ -77,6 +77,12 @@
    (b-vars (list-of symbol?))
    (body expression?)
    (letrec-body expression?))
+  (try-exp
+   (exp1 expression?)
+   (var symbol?)
+   (exp2 expression?))
+  (raise-exp
+   (exp1 expression?))
   (proc-exp 
    (vars symbol?)
    (exp1 expression?))
@@ -104,6 +110,13 @@
    (cont continuation?))
   (diff2-cont
    (val1 expval?)
+   (cont continuation?))
+  (try-cont
+   (var symbol?)
+   (exp expression?)
+   (env environment?)
+   (cont continuation?))
+  (raise-cont
    (cont continuation?))
   (rator-cont
    (rand expression?)
@@ -137,12 +150,40 @@
                         (num2 (expval->num val)))
                     (apply-cont cont
                                 (num-val (- num1 num2)))))
+      (try-cont (var exp env cont)
+                (apply-cont cont val))
+      (raise-cont (cont)
+                  (apply-handler val cont))
       (rator-cont (rand env cont)
                   (value-of/k rand env
                             (rand-cont val cont)))
       (rand-cont (val1 cont)
                  (let ((proc1 (expval->proc val1)))
                    (apply-procedure/k proc1 val cont))))))
+(define apply-handler
+  (lambda (val cont)
+    (cases continuation cont
+      (end-cont ()
+                (eopl:error "Uncaught exception!"))
+      (try-cont (var exp env cont)
+                (value-of/k exp (extend-env var val env) cont))
+      (zero1-cont (saved-cont)
+                  (apply-handler val saved-cont))
+      (let-exp-cont (var body saved-env saved-cont)
+                    (apply-handler val saved-cont))
+      (if-test-cont (exp2 exp3 saved-env saved-cont)
+                    (apply-handler val saved-cont))
+      (diff1-cont (exp2 env saved-cont)
+                 (apply-handler val saved-cont))
+      (diff2-cont (val1 saved-cont)
+                 (apply-handler val saved-cont))
+      (raise-cont (saved-cont)
+                  (apply-handler val saved-cont))
+      (rator-cont (rand env saved-cont)
+                  (apply-handler val saved-cont))
+      (rand-cont (val1 saved-cont)
+                 (apply-handler val saved-cont)))))
+                
 
     
 (define scanner-spec
@@ -179,6 +220,12 @@
     (expression
      ("letrec" identifier "(" (arbno identifier) ")" "=" expression "in" expression)
      letrec-exp)
+    (expression
+     ("try" expression "catch" "(" identifier ")" expression)
+     try-exp)
+    (expression
+     ("raise" expression)
+     raise-exp)
     (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
      proc-exp)
@@ -257,6 +304,10 @@
                    letrec-body 
                    (extend-env-rec p-name b-vars body env)
                    cont))
+      (try-exp (exp1 var exp2)
+               (value-of/k exp1 env (try-cont var exp2 env cont)))
+      (raise-exp (exp1)
+                 (value-of/k exp1 env (raise-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rand)
@@ -271,8 +322,11 @@
                              cont)))))
 
 
-
-
+;(run "try let x = 1
+;            in  if    zero?(x)
+;                then  42
+;                else  raise x
+;       catch(exception) exception")
 
 
   

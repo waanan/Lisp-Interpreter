@@ -1,4 +1,7 @@
 #lang eopl
+
+(define cont-temp '())
+
 (define-datatype environment environment?
   (empty-env)
   (extend-env
@@ -116,8 +119,7 @@
    (exp expression?)
    (env environment?)
    (cont continuation?))
-  (raise-cont
-   (cont continuation?))
+  (raise-cont)
   (rator-cont
    (rand expression?)
    (env environment?)
@@ -151,9 +153,10 @@
                     (apply-cont cont
                                 (num-val (- num1 num2)))))
       (try-cont (var exp env cont)
+                (set! cont-temp (cdr cont-temp))
                 (apply-cont cont val))
-      (raise-cont (cont)
-                  (apply-handler val cont))
+      (raise-cont ()
+                  (apply-handler val))
       (rator-cont (rand env cont)
                   (value-of/k rand env
                             (rand-cont val cont)))
@@ -161,28 +164,17 @@
                  (let ((proc1 (expval->proc val1)))
                    (apply-procedure/k proc1 val cont))))))
 (define apply-handler
-  (lambda (val cont)
-    (cases continuation cont
-      (end-cont ()
-                (eopl:error "Uncaught exception!"))
-      (try-cont (var exp env cont)
-                (value-of/k exp (extend-env var val env) cont))
-      (zero1-cont (saved-cont)
-                  (apply-handler val saved-cont))
-      (let-exp-cont (var body saved-env saved-cont)
-                    (apply-handler val saved-cont))
-      (if-test-cont (exp2 exp3 saved-env saved-cont)
-                    (apply-handler val saved-cont))
-      (diff1-cont (exp2 env saved-cont)
-                 (apply-handler val saved-cont))
-      (diff2-cont (val1 saved-cont)
-                 (apply-handler val saved-cont))
-      (raise-cont (saved-cont)
-                  (apply-handler val saved-cont))
-      (rator-cont (rand env saved-cont)
-                  (apply-handler val saved-cont))
-      (rand-cont (val1 saved-cont)
-                 (apply-handler val saved-cont)))))
+  (lambda (val)
+    (if (null? cont-temp)
+        (eopl:error "Uncaught exception!")
+        (let ((cont (car cont-temp))
+              (rest (cdr cont-temp)))
+          (set! cont-temp rest)
+          (cases continuation cont
+            (try-cont (var exp env cont)
+                      (value-of/k exp (extend-env var val env) cont))
+            (else (eopl:error "Apply-handler run error!")))))))
+                  
                 
 
     
@@ -277,6 +269,7 @@
   (lambda (pgm)
     (cases program pgm
       (a-program (exp1)
+                 (set! cont-temp '())
                  (value-of/k exp1 (init-env) (end-cont))))))
 (define value-of/k
   (lambda (exp env cont)
@@ -305,9 +298,10 @@
                    (extend-env-rec p-name b-vars body env)
                    cont))
       (try-exp (exp1 var exp2)
+               (set! cont-temp (cons (try-cont var exp2 env cont) cont-temp))
                (value-of/k exp1 env (try-cont var exp2 env cont)))
       (raise-exp (exp1)
-                 (value-of/k exp1 env (raise-cont cont)))
+                 (value-of/k exp1 env (raise-cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rand)
@@ -328,7 +322,15 @@
 ;                else  raise x
 ;       catch(exception) exception")
 
-
+;(run "try let x = 1
+;            in  if    zero?(x)
+;                then  42
+;                else  raise try let x = 1
+;                                in  if    zero?(x)
+;                                then  42
+;                                else  raise 43
+;                            catch(exception) exception
+;       catch(exception) exception")
   
   
   
