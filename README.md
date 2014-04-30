@@ -1,3 +1,3 @@
 Lisp-Interpreter
 ================
-²Î¿¼ÊéÄ¿£º¡¶Essentials of Programming Languages¡·
+Learn From ã€ŠEssentials of Programming Languagesã€‹
