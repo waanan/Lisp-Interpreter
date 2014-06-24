@@ -3,7 +3,7 @@
   (empty-env)
   (extend-env
    (var symbol?)
-   (val expval?)
+   (val (lambda (x) (or (expval? x) (continuation? x))))
    (env environment?))
   (extend-env-rec
    (p-name symbol?)
@@ -77,6 +77,12 @@
    (b-vars (list-of symbol?))
    (body expression?)
    (letrec-body expression?))
+  (letcc-exp
+   (var symbol?)
+   (body expression?))
+  (throw-exp
+   (exp1 expression?)
+   (exp2 expression?))
   (try-exp
    (exp1 expression?)
    (var symbol?)
@@ -99,6 +105,12 @@
    (body expression?)
    (env environment?)
    (cont continuation?))
+  (throw-cont
+   (exp2 expression?)
+   (env environment?)
+   (cont continuation?))
+  (throw2-cont
+   (val expval?))
   (if-test-cont
    (exp2 expression?)
    (exp3 expression?)
@@ -139,6 +151,10 @@
                     (value-of/k body
                                 (extend-env var val saved-env)
                                 saved-cont))
+      (throw-cont (exp2 env cont)
+                  (value-of/k exp2 env (throw2-cont val)))
+      (throw2-cont (val1)
+                   (apply-cont val val1))
       (if-test-cont (exp2 exp3 saved-env saved-cont)
                     (if (expval->bool val)
                         (value-of/k exp2 saved-env saved-cont)
@@ -182,7 +198,8 @@
       (rator-cont (rand env saved-cont)
                   (apply-handler val saved-cont))
       (rand-cont (val1 saved-cont)
-                 (apply-handler val saved-cont)))))
+                 (apply-handler val saved-cont))
+      (else (eopl:error "raise-error")))))
                 
 
     
@@ -220,6 +237,12 @@
     (expression
      ("letrec" identifier "(" (arbno identifier) ")" "=" expression "in" expression)
      letrec-exp)
+    (expression
+     ("letcc" identifier expression)
+     letcc-exp)
+    (expression
+     ("throw" expression "to" expression)
+     throw-exp)
     (expression
      ("try" expression "catch" "(" identifier ")" expression)
      try-exp)
@@ -304,6 +327,10 @@
                    letrec-body 
                    (extend-env-rec p-name b-vars body env)
                    cont))
+      (letcc-exp (var body)
+                 (value-of/k body (extend-env var cont env) cont))
+      (throw-exp (exp1 exp2)
+                 (value-of/k exp1 env (throw-cont exp2 env cont)))
       (try-exp (exp1 var exp2)
                (value-of/k exp1 env (try-cont var exp2 env cont)))
       (raise-exp (exp1)
@@ -327,7 +354,9 @@
 ;                then  42
 ;                else  raise x
 ;       catch(exception) exception")
-
+;(run "let x = 1
+;        in -(2,letcc y let z = 1
+;                       in  throw z to y)")
 
   
   
