@@ -1,5 +1,30 @@
 #lang eopl
 
+;;queue
+
+(define the-ready-queue '())
+(define the-final-answer '())
+(define the-max-time-slice '())
+(define the-time-remaining '())
+
+(define empty-queue
+  (lambda () '()))
+(define enqueue
+  (lambda ()
+
+(define initialize-scheduler!
+  (lambda (ticks)
+    (set! the-ready-queue (empty-queue))
+    (set! the-final-answer 'unintialized)
+    (set! the-max-time-slice ticks)
+    (set! the-time-remaining the-max-time-slice)))
+(define place-on-ready-queue!
+  (lambda (th)
+    (set! the-ready-queue
+          (enqueue the-ready-queue th))))
+
+
+
 ;;store
 (define the-store '())
 (define empty-store
