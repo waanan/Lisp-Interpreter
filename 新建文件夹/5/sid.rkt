@@ -9,8 +9,16 @@
 
 (define empty-queue
   (lambda () '()))
+(define empty?
+  (lambda (queue)
+    (null? queue)))
 (define enqueue
-  (lambda ()
+  (lambda (queue th)
+    (append queue (list th))))
+(define dequeue 
+  (lambda (queue op)
+    (op (car queue) (cdr queue))))
+
 
 (define initialize-scheduler!
   (lambda (ticks)
@@ -22,6 +30,27 @@
   (lambda (th)
     (set! the-ready-queue
           (enqueue the-ready-queue th))))
+(define run-next-thread
+  (lambda ()
+    (if (empty? the-ready-queue)
+        (begin 
+          (eopl:printf "End of computation.~%")
+          the-final-answer)
+        (dequeue the-ready-queue
+                 (lambda (first-ready-thread other-ready-threads)
+                   (set! the-ready-queue other-ready-threads)
+                   (set! the-time-remaining the-max-time-slice)
+                   (first-ready-thread))))))
+(define set-final-answer!
+  (lambda (val)
+    (set! the-final-answer val)))
+(define time-expired?
+  (lambda ()
+    (zero? the-time-remaining)))
+(define decrement-timer!
+  (lambda ()
+    (set! the-time-remaining (- the-time-remaining 1))))
+
 
 
 
@@ -170,6 +199,8 @@
    (exp1 expression?))
   (beg-exp
    (exps (list-of expression?)))
+  (spwan-exp 
+   (exp1 expression?))
   (proc-exp 
    (vars (list-of symbol?))
    (exp1 expression?))
@@ -181,7 +212,7 @@
   '((white-sp (whitespace) skip)
     (comment ("%" (arbno (not #\newline))) skip)
     (identifier (letter (arbno (or letter digit))) symbol)
-;    (boolean ("#" (or "t" "f")) symbol) 
+    ;    (boolean ("#" (or "t" "f")) symbol) 
     (number ((or "" "-") digit (arbno digit)) number)))
 (define grammar
   '((program
@@ -239,6 +270,9 @@
      ("begin" (separated-list expression ";") "end")
      beg-exp)
     (expression
+     ("spwan" "(" expression ")")
+     spwan-exp)
+    (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
      proc-exp)
     (expression
@@ -250,8 +284,8 @@
   (sllgen:make-string-parser scanner-spec grammar))
 
 (define-datatype continuation continuation?
-  (end-cont)
-  
+  (end-main-thread-cont)
+  (end-sub-thread-cont)
   (null?-cont
    (cont continuation?))
   (cons1-cont
@@ -307,6 +341,8 @@
    (exps (list-of expression?))
    (env environment?)
    (cont continuation?))
+  (spwan-cont
+   (cont continuation?))
   (rator-cont
    (rands (list-of expression?))
    (env environment?)
@@ -319,96 +355,113 @@
    (cont continuation?)))
 (define apply-cont
   (lambda (cont val)
-    (cases continuation cont
-      (end-cont ()
-                (begin 
-                  (eopl:printf "End of computation.~%")
-                  val))
-      (null?-cont (saved-cont)
-                  (let ((lst (expval->ls val)))
-                    (cases ls lst
-                      (null-val ()
-                                (apply-cont saved-cont (bool-val #t)))
-                      (cons-val (val1 val2)
-                                (apply-cont saved-cont (bool-val #f))))))
-      (cons1-cont (exp2 saved-env saved-cont)
-                  (value-of/k exp2 saved-env (cons2-cont val saved-cont)))
-      (cons2-cont (val1 saved-cont)
-                  (apply-cont saved-cont (ls-val (cons-val val1 val))))
-      (car-cont (saved-cont)
-                (let ((lst (expval->ls val)))
-                  (cases ls lst
-                    (null-val ()
-                              (eopl:error "list is null ~s" 'car-exp)) 
-                    (cons-val (val1 val2)
-                              (apply-cont saved-cont val1)))))
-      (cdr-cont (saved-cont)
-                (let ((lst (expval->ls val)))
-                  (cases ls lst
-                    (null-val ()
-                              (eopl:error "list is null ~s" 'cdr-exp)) 
-                    (cons-val (val1 val2)
-                              (apply-cont saved-cont val2))))) 
-      (list-cont (expvals exps env saved-cont)
-                 (if (null? exps)
-                     (apply-cont saved-cont (list-help expvals))
-                     (value-of/k (car exps) env (list-cont (cons val expvals) (cdr exps) env saved-cont))))
-                     
-      
-      (zero1-cont (saved-cont)
-                  (apply-cont saved-cont 
-                              (bool-val (= (expval->num val) 0))))
-      (let-exp-cont (var vars exps body const-env saved-env saved-cont)
-                    (if (null? vars)
-                        (value-of/k body
-                                (extend-env var (newref val) saved-env)
-                                saved-cont)
-                        (value-of/k (car exps)
-                                    const-env
-                                    (let-exp-cont (car vars) (cdr vars) (cdr exps) body 
-                                                  const-env
-                                                  (extend-env var (newref val) saved-env)
-                                                  saved-cont))))
-      (if-test-cont (exp2 exp3 saved-env saved-cont)
-                    (if (expval->bool val)
-                        (value-of/k exp2 saved-env saved-cont)
-                        (value-of/k exp3 saved-env saved-cont) ))
-      (diff1-cont (exp2 env cont)
-                  (value-of/k exp2 env (diff2-cont val cont)))
-      (diff2-cont (val1 cont)
-                  (let ((num1 (expval->num val1))
-                        (num2 (expval->num val)))
-                    (apply-cont cont
-                                (num-val (- num1 num2)))))
-      (multi1-cont (exp2 env cont)
-                  (value-of/k exp2 env (multi2-cont val cont)))
-      (multi2-cont (val1 cont)
-                  (let ((num1 (expval->num val1))
-                        (num2 (expval->num val)))
-                    ;(eopl:printf "~s * ~s~%" num1 num2)
-                    (apply-cont cont
-                                (num-val (* num1 num2)))))
-      (set-cont (var env saved-cont)
-                (let ((n (apply-env env var)))
-                  (setref! n val)
-                  (apply-cont saved-cont (num-val 42))))
-      (beg-cont (exps env cont)
-                (if (null? exps)
-                    (apply-cont cont val)
-                    (value-of/k (car exps) env (beg-cont (cdr exps) env cont))))
-                    
-      (rator-cont (rands env cont)
-                  (if (null? rands)
-                      (let ((proc1 (expval->proc val)))
-                        (apply-procedure/k proc1 '() cont))
-                      (value-of/k (car rands) env
-                                  (rands-cont val '() (cdr rands) env cont))))
-      (rands-cont (val1 rands rest-rands env cont)
-                 (if (null? rest-rands)
-                     (let ((proc1 (expval->proc val1)))
-                        (apply-procedure/k proc1 (append rands (list val)) cont))
-                     (value-of/k (car rest-rands) env
-                                  (rands-cont val1 (append rands (list val)) (cdr rest-rands) env cont)))))))
+    (if (time-expired?)
+        (begin
+          (place-on-ready-queue!
+           (lambda () (apply-cont cont val)))
+          (run-next-thread))
+        (begin 
+          (decrement-timer!)
+          (cases continuation cont
+            (end-main-thread-cont ()
+                                  (set-final-answer! val)
+                                  (run-next-thread))
+            (end-sub-thread-cont ()
+                                 (run-next-thread))
+            (null?-cont (saved-cont)
+                        (let ((lst (expval->ls val)))
+                          (cases ls lst
+                            (null-val ()
+                                      (apply-cont saved-cont (bool-val #t)))
+                            (cons-val (val1 val2)
+                                      (apply-cont saved-cont (bool-val #f))))))
+            (cons1-cont (exp2 saved-env saved-cont)
+                        (value-of/k exp2 saved-env (cons2-cont val saved-cont)))
+            (cons2-cont (val1 saved-cont)
+                        (apply-cont saved-cont (ls-val (cons-val val1 val))))
+            (car-cont (saved-cont)
+                      (let ((lst (expval->ls val)))
+                        (cases ls lst
+                          (null-val ()
+                                    (eopl:error "list is null ~s" 'car-exp)) 
+                          (cons-val (val1 val2)
+                                    (apply-cont saved-cont val1)))))
+            (cdr-cont (saved-cont)
+                      (let ((lst (expval->ls val)))
+                        (cases ls lst
+                          (null-val ()
+                                    (eopl:error "list is null ~s" 'cdr-exp)) 
+                          (cons-val (val1 val2)
+                                    (apply-cont saved-cont val2))))) 
+            (list-cont (expvals exps env saved-cont)
+                       (if (null? exps)
+                           (apply-cont saved-cont (list-help expvals))
+                           (value-of/k (car exps) env (list-cont (cons val expvals) (cdr exps) env saved-cont))))
+            
+            
+            (zero1-cont (saved-cont)
+                        (apply-cont saved-cont 
+                                    (bool-val (= (expval->num val) 0))))
+            (let-exp-cont (var vars exps body const-env saved-env saved-cont)
+                          (if (null? vars)
+                              (value-of/k body
+                                          (extend-env var (newref val) saved-env)
+                                          saved-cont)
+                              (value-of/k (car exps)
+                                          const-env
+                                          (let-exp-cont (car vars) (cdr vars) (cdr exps) body 
+                                                        const-env
+                                                        (extend-env var (newref val) saved-env)
+                                                        saved-cont))))
+            (if-test-cont (exp2 exp3 saved-env saved-cont)
+                          (if (expval->bool val)
+                              (value-of/k exp2 saved-env saved-cont)
+                              (value-of/k exp3 saved-env saved-cont) ))
+            (diff1-cont (exp2 env cont)
+                        (value-of/k exp2 env (diff2-cont val cont)))
+            (diff2-cont (val1 cont)
+                        (let ((num1 (expval->num val1))
+                              (num2 (expval->num val)))
+                          (apply-cont cont
+                                      (num-val (- num1 num2)))))
+            (multi1-cont (exp2 env cont)
+                         (value-of/k exp2 env (multi2-cont val cont)))
+            (multi2-cont (val1 cont)
+                         (let ((num1 (expval->num val1))
+                               (num2 (expval->num val)))
+                           ;(eopl:printf "~s * ~s~%" num1 num2)
+                           (apply-cont cont
+                                       (num-val (* num1 num2)))))
+            (set-cont (var env saved-cont)
+                      (let ((n (apply-env env var)))
+                        (setref! n val)
+                        (apply-cont saved-cont (num-val 42))))
+            (beg-cont (exps env cont)
+                      (if (null? exps)
+                          (apply-cont cont val)
+                          (value-of/k (car exps) env (beg-cont (cdr exps) env cont))))
+            
+            (spwan-cont (saved-cont)
+                        (let ((proc1 (expval->proc val)))
+                          (place-on-ready-queue!
+                           (lambda ()
+                             (apply-procedure/k proc1
+                                                (num-val 28)
+                                                (end-sub-thread-cont))))
+                          (apply-cont saved-cont (num-val 73))))
+            
+            (rator-cont (rands env cont)
+                        (if (null? rands)
+                            (let ((proc1 (expval->proc val)))
+                              (apply-procedure/k proc1 '() cont))
+                            (value-of/k (car rands) env
+                                        (rands-cont val '() (cdr rands) env cont))))
+            (rands-cont (val1 rands rest-rands env cont)
+                        (if (null? rest-rands)
+                            (let ((proc1 (expval->proc val1)))
+                              (apply-procedure/k proc1 (append rands (list val)) cont))
+                            (value-of/k (car rest-rands) env
+                                        (rands-cont val1 (append rands (list val)) (cdr rest-rands) env cont)))))))))
 ;;help-function
 (define list-iter
   (lambda (expvals result)
@@ -418,8 +471,8 @@
 (define list-help
   (lambda (expvals)
     (list-iter expvals (ls-val (null-val)))))
-    
-    
+
+
 
 
 
@@ -450,7 +503,7 @@
       (proc-val (proc) proc)
       (else (report-expval-extractor-error 'proc val)))))
 (define expval->ls
-   (lambda (val)
+  (lambda (val)
     (cases expval val
       (ls-val (lst) lst)
       (else (report-expval-extractor-error 'lst val)))))
@@ -458,7 +511,7 @@
 (define report-expval-extractor-error 
   (lambda (x y)
     (eopl:error x "~s extract error" y)))
-  
+
 (define-datatype proc proc?
   (procedure
    (vars (list-of symbol?))
@@ -474,14 +527,15 @@
 
 
 (define run
-  (lambda (string)
-    (value-of-program (scan&parse string))))
+  (lambda (string timeslice)
+    (value-of-program (scan&parse string) timeslice)))
 (define value-of-program
-  (lambda (pgm)
+  (lambda (pgm timeslice)
     (initialize-store!)
+    (initialize-scheduler! timeslice)
     (cases program pgm
       (a-program (exp1)
-                 (value-of/k exp1 (init-env) (end-cont))))))
+                 (value-of/k exp1 (init-env) (end-main-thread-cont))))))
 (define value-of/k
   (lambda (exp env cont)
     (cases expression exp
@@ -507,15 +561,15 @@
                     (value-of/k (car exps) env (list-cont '() (cdr exps) env cont))))
       (var-exp (var) (apply-cont cont 
                                  (let ((n (apply-env env var)))
-                                  (if (integer? n)
-                                      (deref n)
-                                      n))))
+                                   (if (integer? n)
+                                       (deref n)
+                                       n))))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
-                          (diff1-cont exp2 env cont)))
+                            (diff1-cont exp2 env cont)))
       (multi-exp (exp1 exp2)
-                (value-of/k exp1 env 
-                            (multi1-cont exp2 env cont)))
+                 (value-of/k exp1 env 
+                             (multi1-cont exp2 env cont)))
       (zero?-exp (exp1)
                  (value-of/k exp1 env
                              (zero1-cont cont)))
@@ -526,7 +580,7 @@
                (if (null? vars)
                    (apply-cont cont body)
                    (value-of/k (car exps) env 
-                         (let-exp-cont (car vars) vars exps body env env cont))))
+                               (let-exp-cont (car vars) vars exps body env env cont))))
       (letrec-exp (p-name b-vars body letrec-body)
                   (value-of/k
                    letrec-body 
@@ -536,6 +590,8 @@
                (value-of/k exp1 env (set-cont var env cont)))
       (beg-exp (exps)
                (value-of/k (car exps) env (beg-cont (cdr exps) env cont)))
+      (spwan-exp (exp1)
+                 (value-of/k exp env (spwan-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rands)
@@ -550,23 +606,25 @@
                              cont)))))
 (define apply-help
   (lambda (vars vals saved-env)
-           (if (null? vars)
-               saved-env
-               (apply-help (cdr vars) (cdr vals)
-                           (extend-env (car vars) (newref (car vals)) saved-env)))))
+    (if (null? vars)
+        saved-env
+        (apply-help (cdr vars) (cdr vals)
+                    (extend-env (car vars) (newref (car vals)) saved-env)))))
 
 ;(run "letrec fact(n) = if    zero?(-(n,1))
 ;                         then  1
 ;                         else  *(n,(fact -(n,1)))
-;               in (fact 4)")
+;               in (fact 4)
+;      5")
 
 ;(run "letrec factiter(n,x) = if    zero?(-(n,1))
 ;                                then  x
 ;                                else  (factiter -(n,1) *(n,x))
-;               in (factiter 4 1)")
+;               in (factiter 4 1)"
+;      5)
 
-  
-  
-  
-  
-  
+
+
+
+
+
