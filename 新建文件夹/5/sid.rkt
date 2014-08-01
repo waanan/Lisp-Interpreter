@@ -151,6 +151,12 @@
                (pred (car lst))
                ((list-of pred) (cdr lst)))))))
 
+;mutex
+(define-datatype mutex mutex?
+  (a-mutex
+   (ref-to-closed? reference?)
+   (ref-to-wait-queue reference?)))
+
 (define-datatype program program?
   (a-program
    (exp1 expression?)))
@@ -185,6 +191,8 @@
    (exp3 expression?))
   (var-exp
    (var symbol?))
+  (print-exp
+   (exp1 expression?))
   (let-exp
    (vars (list-of symbol?))
    (exps (list-of expression?))
@@ -243,6 +251,9 @@
      ("list" "(" (separated-list expression ",") ")")
      list-exp)
     (expression
+     ("print" "(" expression ")")
+     print-exp)
+    (expression
      ("-" "(" expression "," expression ")")
      diff-exp)
     (expression
@@ -270,7 +281,7 @@
      ("begin" (separated-list expression ";") "end")
      beg-exp)
     (expression
-     ("spwan" "(" expression ")")
+     ("spawn" "(" expression ")")
      spwan-exp)
     (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
@@ -303,6 +314,8 @@
    (epxvals (list-of expval?))
    (exps (list-of expression?))
    (env environment?)
+   (cont continuation?))
+  (print-cont
    (cont continuation?))
   (zero1-cont
    (cont continuation?))
@@ -395,10 +408,13 @@
                                     (apply-cont saved-cont val2))))) 
             (list-cont (expvals exps env saved-cont)
                        (if (null? exps)
-                           (apply-cont saved-cont (list-help expvals))
+                           (apply-cont saved-cont (list-help (cons val expvals)))
                            (value-of/k (car exps) env (list-cont (cons val expvals) (cdr exps) env saved-cont))))
             
-            
+            (print-cont (saved-cont)
+                        (display val)
+                        (newline)
+                        (apply-cont saved-cont (num-val 10)))
             (zero1-cont (saved-cont)
                         (apply-cont saved-cont 
                                     (bool-val (= (expval->num val) 0))))
@@ -446,7 +462,7 @@
                           (place-on-ready-queue!
                            (lambda ()
                              (apply-procedure/k proc1
-                                                (num-val 28)
+                                                (list (num-val 28))
                                                 (end-sub-thread-cont))))
                           (apply-cont saved-cont (num-val 73))))
             
@@ -564,6 +580,8 @@
                                    (if (integer? n)
                                        (deref n)
                                        n))))
+      (print-exp (exp1)
+                 (value-of/k exp1 env (print-cont cont))) 
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
                             (diff1-cont exp2 env cont)))
@@ -591,7 +609,7 @@
       (beg-exp (exps)
                (value-of/k (car exps) env (beg-cont (cdr exps) env cont)))
       (spwan-exp (exp1)
-                 (value-of/k exp env (spwan-cont cont)))
+                 (value-of/k exp1 env (spwan-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rands)
@@ -622,9 +640,64 @@
 ;                                else  (factiter -(n,1) *(n,x))
 ;               in (factiter 4 1)"
 ;      5)
-
-
-
-
+; (run "let x = 1
+;        in  begin 
+;              print(x);
+;              set x =2;
+;              print(x)
+;            end"
+;       5)
+;(run "letrec 
+;          noisy (x) = if null?(x)
+;                      then 0
+;                      else begin print(car(x)); 
+;                                 (noisy cdr(x)) 
+;                           end
+;        in
+;          begin 
+;            spawn(proc (d) (noisy list(1,2,3,4,5)));
+;            spawn(proc (d) (noisy list(6,7,8,9,10)));
+;            print(100);
+;            33
+;          end"
+;       5)
+;(run "let buffer = 0
+;      in  let producer = proc (n)
+;                           letrec
+;                             wait(k) = if zero?(k)
+;                                       then begin
+;                                              set buffer = n;
+;                                              print(42)
+;                                            end
+;                                       else begin 
+;                                              print(*(k,10));
+;                                              (wait -(k,1))
+;                                            end
+;                           in (wait 5)
+;          in let consumer = proc (d)
+;                              letrec busywait (k) = if zero?(buffer)
+;                                                    then begin
+;                                                           print(*(k,100));
+;                                                           (busywait -(k,1))
+;                                                         end
+;                                                    else buffer
+;                               in (busywait 0)
+;             in begin 
+;                  spawn(proc (d) (producer 44));
+;                  print(300);
+;                  (consumer 86)
+;                end"
+;     10)
+; (run "let x = 3
+;      in let incrx = proc (id)
+;                        proc (dummy)
+;                          set x = -(x,1)
+;         in begin  
+;              spawn((incrx 100));
+;              spawn((incrx 200));
+;              spawn((incrx 300));
+;              print(x)
+;            end"
+;     10)
 
 
