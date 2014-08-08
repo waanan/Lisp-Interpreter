@@ -151,6 +151,17 @@
                (pred (car lst))
                ((list-of pred) (cdr lst)))))))
 
+;mutex
+(define-datatype mutex mutex?
+  (a-mutex
+   (ref-to-closed? reference?)
+   (ref-to-wait-queue reference?)))
+(define new-mutex
+  (lambda ()
+    (a-mutex
+     (newref #f)
+     (newref '()))))
+
 (define-datatype program program?
   (a-program
    (exp1 expression?)))
@@ -160,6 +171,11 @@
   (const2-exp
    (bool symbol?))
   (null-exp)
+  (mutex-exp)
+  (wait-exp
+   (exp1 expression?))
+  (signal-exp
+   (exp1 expression?))
   (null?-exp
    (exp1 expression?))
   (cons-exp
@@ -225,7 +241,16 @@
      const1-exp)    
     (expression
      ("#" identifier)
-     const2-exp)  
+     const2-exp)
+    (expression
+     ("mutex" "(" ")")
+     mutex-exp)
+    (expression
+     ("wait" "(" expression ")")
+     wait-exp)
+    (expression
+     ("signal" "(" expression ")")
+     signal-exp)
     (expression
      ("emptylist")
      null-exp)
@@ -275,7 +300,7 @@
      ("begin" (separated-list expression ";") "end")
      beg-exp)
     (expression
-     ("spwan" "(" expression ")")
+     ("spawn" "(" expression ")")
      spwan-exp)
     (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
@@ -299,6 +324,10 @@
    (cont continuation?))
   (cons2-cont
    (val1 expval?)
+   (cont continuation?))
+  (wait-cont
+   (cont continuation?))
+  (signal-cont
    (cont continuation?))
   (car-cont
    (cont continuation?))
@@ -386,6 +415,14 @@
                         (value-of/k exp2 saved-env (cons2-cont val saved-cont)))
             (cons2-cont (val1 saved-cont)
                         (apply-cont saved-cont (ls-val (cons-val val1 val))))
+            (wait-cont (saved-cont)
+                       (wait-for-mutex
+                        (expval->mutex val)
+                        (lambda () (apply-cont saved-cont (num-val 52)))))
+            (signal-cont (saved-cont)
+                         (signal-mutex
+                          (expval->mutex val)
+                          (lambda () (apply-cont saved-cont (num-val 53)))))
             (car-cont (saved-cont)
                       (let ((lst (expval->ls val)))
                         (cases ls lst
@@ -402,7 +439,7 @@
                                     (apply-cont saved-cont val2))))) 
             (list-cont (expvals exps env saved-cont)
                        (if (null? exps)
-                           (apply-cont saved-cont (list-help expvals))
+                           (apply-cont saved-cont (list-help (cons val expvals)))
                            (value-of/k (car exps) env (list-cont (cons val expvals) (cdr exps) env saved-cont))))
             
             (print-cont (saved-cont)
@@ -456,7 +493,7 @@
                           (place-on-ready-queue!
                            (lambda ()
                              (apply-procedure/k proc1
-                                                (num-val 28)
+                                                (list (num-val 28))
                                                 (end-sub-thread-cont))))
                           (apply-cont saved-cont (num-val 73))))
             
@@ -482,10 +519,36 @@
   (lambda (expvals)
     (list-iter expvals (ls-val (null-val)))))
 
-
-
-
-
+(define wait-for-mutex
+  (lambda (m th)
+    (cases mutex m
+      (a-mutex (ref-to-closed? ref-to-wait-queue)
+               (cond 
+                 ((deref ref-to-closed?)
+                  (setref! ref-to-wait-queue
+                           (enqueue (deref ref-to-wait-queue) th))
+                  (run-next-thread))
+                 (else
+                  (setref! ref-to-closed? #t)
+                  (th)))))))
+(define signal-mutex
+  (lambda (m th)
+    (cases mutex m
+      (a-mutex (ref-to-closed? ref-to-wait-queue)
+               (let ((closed? (deref ref-to-closed?))
+                     (wait-queue (deref ref-to-wait-queue)))
+                 (if closed?
+                     (if (empty? wait-queue)
+                         (setref! ref-to-closed? #f)
+                         (dequeue wait-queue
+                                  (lambda (first-waiting-th other-waiting-ths)
+                                    (place-on-ready-queue!
+                                     first-waiting-th)
+                                    (setref! ref-to-wait-queue
+                                             other-waiting-ths))))
+                     (begin (display "signal open mutex")
+                            (newline)))
+                 (th))))))
 
 ;;基本数据类型
 (define-datatype expval expval?
@@ -493,6 +556,8 @@
    (num number?))
   (bool-val
    (bool boolean?))
+  (mutex-val
+   (mutex1 mutex?))
   (proc-val
    (proc proc?))
   (ls-val
@@ -507,6 +572,11 @@
     (cases expval val
       (bool-val (bool) bool)
       (else (report-expval-extractor-error 'bool val)))))
+(define expval->mutex
+  (lambda (val)
+    (cases expval val
+      (mutex-val (mutex1) mutex1)
+      (else (report-expval-extractor-error 'mutex val)))))
 (define expval->proc
   (lambda (val)
     (cases expval val
@@ -575,7 +645,13 @@
                                        (deref n)
                                        n))))
       (print-exp (exp1)
-                 (value-of/k exp1 env (print-cont cont))) 
+                 (value-of/k exp1 env (print-cont cont)))
+      (mutex-exp ()
+                 (apply-cont cont (mutex-val (new-mutex))))
+      (wait-exp (exp1)
+                (value-of/k exp1 env (wait-cont cont)))
+      (signal-exp (exp1)
+                  (value-of/k exp1 env (signal-cont cont)))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
                             (diff1-cont exp2 env cont)))
@@ -603,7 +679,7 @@
       (beg-exp (exps)
                (value-of/k (car exps) env (beg-cont (cdr exps) env cont)))
       (spwan-exp (exp1)
-                 (value-of/k exp env (spwan-cont cont)))
+                 (value-of/k exp1 env (spwan-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rands)
@@ -634,9 +710,101 @@
 ;                                else  (factiter -(n,1) *(n,x))
 ;               in (factiter 4 1)"
 ;      5)
-
-
-
-
+; (run "let x = 1
+;        in  begin 
+;              print(x);
+;              set x =2;
+;              print(x)
+;            end"
+;       5)
+;(run "letrec 
+;          noisy (x) = if null?(x)
+;                      then 0
+;                      else begin print(car(x)); 
+;                                 (noisy cdr(x)) 
+;                           end
+;        in
+;          begin 
+;            spawn(proc (d) (noisy list(1,2,3,4,5)));
+;            spawn(proc (d) (noisy list(6,7,8,9,10)));
+;            print(100);
+;            33
+;          end"
+;       5)
+;(run "let buffer = 0
+;      in  let producer = proc (n)
+;                           letrec
+;                             wait(k) = if zero?(k)
+;                                       then begin
+;                                              set buffer = n;
+;                                              print(42)
+;                                            end
+;                                       else begin 
+;                                              print(*(k,10));
+;                                              (wait -(k,1))
+;                                            end
+;                           in (wait 5)
+;          in let consumer = proc (d)
+;                              letrec busywait (k) = if zero?(buffer)
+;                                                    then begin
+;                                                           print(*(k,100));
+;                                                           (busywait -(k,1))
+;                                                         end
+;                                                    else buffer
+;                               in (busywait 0)
+;             in begin 
+;                  spawn(proc (d) (producer 44));
+;                  print(300);
+;                  (consumer 86)
+;                end"
+;     10)
+; (run "let x = 3
+;      in let incrx = proc (id)
+;                        proc (dummy)
+;                          begin
+;                            set x = -(x,1);
+;                            print(x)
+;                          end
+;         in begin  
+;              spawn((incrx 100));
+;              spawn((incrx 200));
+;              spawn((incrx 300))
+;            end"
+;     1)
+;(run "let x = 3
+;      in  let mut = mutex()
+;          in let incrx = proc (id)
+;                           proc (dummy)
+;                             begin 
+;                               wait(mut);
+;                               set x = -(x,1);
+;                               print(x);
+;                               signal(mut)
+;                             end
+;             in begin
+;                  spawn((incrx 100));
+;                  spawn((incrx 200));
+;                  spawn((incrx 300))
+;                end"
+;     2)
+(run "let mut1 = mutex()
+          mut2 = mutex()
+      in begin 
+           spawn(proc (id) begin
+                             wait(mut1);
+                             wait(mut1);
+                             print(1);
+                             signal(mut2)
+                           end);
+           spawn(proc (id) begin
+                             wait(mut2);
+                             wait(mut2);
+                             print(2);
+                             signal(mut1)
+                           end);
+           print(1);
+           print(2)
+          end"
+     2)
 
 

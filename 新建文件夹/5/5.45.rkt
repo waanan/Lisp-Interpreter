@@ -176,6 +176,7 @@
    (exp1 expression?))
   (signal-exp
    (exp1 expression?))
+  (yield-exp)
   (null?-exp
    (exp1 expression?))
   (cons-exp
@@ -251,6 +252,9 @@
     (expression
      ("signal" "(" expression ")")
      signal-exp)
+    (expression
+     ("yield" "(" ")")
+     yield-exp)
     (expression
      ("emptylist")
      null-exp)
@@ -652,6 +656,11 @@
                 (value-of/k exp1 env (wait-cont cont)))
       (signal-exp (exp1)
                   (value-of/k exp1 env (signal-cont cont)))
+      (yield-exp ()
+                 (begin
+                   (place-on-ready-queue!
+                    (lambda () (apply-cont cont (num-val 99))))
+                   (run-next-thread)))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
                             (diff1-cont exp2 env cont)))
@@ -771,20 +780,34 @@
 ;              spawn((incrx 300))
 ;            end"
 ;     1)
-(run "let x = 3
-      in  let mut = mutex()
-          in let incrx = proc (id)
-                           proc (dummy)
-                             begin 
-                               wait(mut);
-                               set x = -(x,1);
-                               print(x);
-                               signal(mut)
-                             end
-             in begin
-                  spawn((incrx 100));
-                  spawn((incrx 200));
-                  spawn((incrx 300))
-                end"
-     20)
+;(run "let x = 3
+;      in  let mut = mutex()
+;          in let incrx = proc (id)
+;                           proc (dummy)
+;                             begin 
+;                               wait(mut);
+;                               set x = -(x,1);
+;                               print(x);
+;                               signal(mut)
+;                             end
+;             in begin
+;                  spawn((incrx 100));
+;                  spawn((incrx 200));
+;                  spawn((incrx 300))
+;                end"
+;     2)
+(run "begin
+        spawn(proc (id) begin
+                          print(1);
+                          yield();
+                          print(2)
+                        end);
+        spawn(proc (id) begin
+                          print(11);
+                          print(12)
+                        end)
+      end"
+     3)
+
+
 

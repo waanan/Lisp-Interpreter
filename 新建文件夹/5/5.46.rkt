@@ -13,8 +13,8 @@
   (lambda (queue)
     (null? queue)))
 (define enqueue
-  (lambda (queue th)
-    (append queue (list th))))
+  (lambda (queue th ticks)
+    (append queue (list (cons th ticks)))))
 (define dequeue 
   (lambda (queue op)
     (op (car queue) (cdr queue))))
@@ -27,9 +27,9 @@
     (set! the-max-time-slice ticks)
     (set! the-time-remaining the-max-time-slice)))
 (define place-on-ready-queue!
-  (lambda (th)
+  (lambda (th tick)
     (set! the-ready-queue
-          (enqueue the-ready-queue th))))
+          (enqueue the-ready-queue th tick))))
 (define run-next-thread
   (lambda ()
     (if (empty? the-ready-queue)
@@ -39,8 +39,8 @@
         (dequeue the-ready-queue
                  (lambda (first-ready-thread other-ready-threads)
                    (set! the-ready-queue other-ready-threads)
-                   (set! the-time-remaining the-max-time-slice)
-                   (first-ready-thread))))))
+                   (set! the-time-remaining (cdr first-ready-thread))
+                   ((car first-ready-thread)))))))
 (define set-final-answer!
   (lambda (val)
     (set! the-final-answer val)))
@@ -156,6 +156,11 @@
   (a-mutex
    (ref-to-closed? reference?)
    (ref-to-wait-queue reference?)))
+(define new-mutex
+  (lambda ()
+    (a-mutex
+     (newref #f)
+     (newref '()))))
 
 (define-datatype program program?
   (a-program
@@ -166,6 +171,12 @@
   (const2-exp
    (bool symbol?))
   (null-exp)
+  (mutex-exp)
+  (wait-exp
+   (exp1 expression?))
+  (signal-exp
+   (exp1 expression?))
+  (yield-exp)
   (null?-exp
    (exp1 expression?))
   (cons-exp
@@ -231,7 +242,19 @@
      const1-exp)    
     (expression
      ("#" identifier)
-     const2-exp)  
+     const2-exp)
+    (expression
+     ("mutex" "(" ")")
+     mutex-exp)
+    (expression
+     ("wait" "(" expression ")")
+     wait-exp)
+    (expression
+     ("signal" "(" expression ")")
+     signal-exp)
+    (expression
+     ("yield" "(" ")")
+     yield-exp)
     (expression
      ("emptylist")
      null-exp)
@@ -306,6 +329,10 @@
   (cons2-cont
    (val1 expval?)
    (cont continuation?))
+  (wait-cont
+   (cont continuation?))
+  (signal-cont
+   (cont continuation?))
   (car-cont
    (cont continuation?))
   (cdr-cont
@@ -371,7 +398,8 @@
     (if (time-expired?)
         (begin
           (place-on-ready-queue!
-           (lambda () (apply-cont cont val)))
+           (lambda () (apply-cont cont val))
+           the-max-time-slice)
           (run-next-thread))
         (begin 
           (decrement-timer!)
@@ -392,6 +420,14 @@
                         (value-of/k exp2 saved-env (cons2-cont val saved-cont)))
             (cons2-cont (val1 saved-cont)
                         (apply-cont saved-cont (ls-val (cons-val val1 val))))
+            (wait-cont (saved-cont)
+                       (wait-for-mutex
+                        (expval->mutex val)
+                        (lambda () (apply-cont saved-cont (num-val 52)))))
+            (signal-cont (saved-cont)
+                         (signal-mutex
+                          (expval->mutex val)
+                          (lambda () (apply-cont saved-cont (num-val 53)))))
             (car-cont (saved-cont)
                       (let ((lst (expval->ls val)))
                         (cases ls lst
@@ -463,7 +499,8 @@
                            (lambda ()
                              (apply-procedure/k proc1
                                                 (list (num-val 28))
-                                                (end-sub-thread-cont))))
+                                                (end-sub-thread-cont)))
+                           the-max-time-slice)
                           (apply-cont saved-cont (num-val 73))))
             
             (rator-cont (rands env cont)
@@ -488,10 +525,37 @@
   (lambda (expvals)
     (list-iter expvals (ls-val (null-val)))))
 
-
-
-
-
+(define wait-for-mutex
+  (lambda (m th)
+    (cases mutex m
+      (a-mutex (ref-to-closed? ref-to-wait-queue)
+               (cond 
+                 ((deref ref-to-closed?)
+                  (setref! ref-to-wait-queue
+                           (enqueue (deref ref-to-wait-queue) th the-max-time-slice))
+                  (run-next-thread))
+                 (else
+                  (setref! ref-to-closed? #t)
+                  (th)))))))
+(define signal-mutex
+  (lambda (m th)
+    (cases mutex m
+      (a-mutex (ref-to-closed? ref-to-wait-queue)
+               (let ((closed? (deref ref-to-closed?))
+                     (wait-queue (deref ref-to-wait-queue)))
+                 (if closed?
+                     (if (empty? wait-queue)
+                         (setref! ref-to-closed? #f)
+                         (dequeue wait-queue
+                                  (lambda (first-waiting-th other-waiting-ths)
+                                    (place-on-ready-queue!
+                                     first-waiting-th
+                                     the-max-time-slice)
+                                    (setref! ref-to-wait-queue
+                                             other-waiting-ths))))
+                     (begin (display "signal open mutex")
+                            (newline)))
+                 (th))))))
 
 ;;基本数据类型
 (define-datatype expval expval?
@@ -499,6 +563,8 @@
    (num number?))
   (bool-val
    (bool boolean?))
+  (mutex-val
+   (mutex1 mutex?))
   (proc-val
    (proc proc?))
   (ls-val
@@ -513,6 +579,11 @@
     (cases expval val
       (bool-val (bool) bool)
       (else (report-expval-extractor-error 'bool val)))))
+(define expval->mutex
+  (lambda (val)
+    (cases expval val
+      (mutex-val (mutex1) mutex1)
+      (else (report-expval-extractor-error 'mutex val)))))
 (define expval->proc
   (lambda (val)
     (cases expval val
@@ -581,7 +652,19 @@
                                        (deref n)
                                        n))))
       (print-exp (exp1)
-                 (value-of/k exp1 env (print-cont cont))) 
+                 (value-of/k exp1 env (print-cont cont)))
+      (mutex-exp ()
+                 (apply-cont cont (mutex-val (new-mutex))))
+      (wait-exp (exp1)
+                (value-of/k exp1 env (wait-cont cont)))
+      (signal-exp (exp1)
+                  (value-of/k exp1 env (signal-cont cont)))
+      (yield-exp ()
+                 (begin
+                   (place-on-ready-queue!
+                    (lambda () (apply-cont cont (num-val 99)))
+                    the-time-remaining)
+                   (run-next-thread)))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
                             (diff1-cont exp2 env cont)))
@@ -691,13 +774,44 @@
 ; (run "let x = 3
 ;      in let incrx = proc (id)
 ;                        proc (dummy)
-;                          set x = -(x,1)
+;                          begin
+;                            set x = -(x,1);
+;                            print(x)
+;                          end
 ;         in begin  
 ;              spawn((incrx 100));
 ;              spawn((incrx 200));
-;              spawn((incrx 300));
-;              print(x)
+;              spawn((incrx 300))
 ;            end"
-;     10)
-
-
+;     1)
+;(run "let x = 3
+;      in  let mut = mutex()
+;          in let incrx = proc (id)
+;                           proc (dummy)
+;                             begin 
+;                               wait(mut);
+;                               set x = -(x,1);
+;                               print(x);
+;                               signal(mut)
+;                             end
+;             in begin
+;                  spawn((incrx 100));
+;                  spawn((incrx 200));
+;                  spawn((incrx 300))
+;                end"
+;     2)
+(run "begin
+        spawn(proc (id) begin
+                          print(1);
+                          yield();
+                          print(2);
+                          print(3)
+                        end);
+        spawn(proc (id) begin
+                          print(11);
+                          print(12);
+                          yield();
+                          print(13)
+                        end)
+      end"
+     3)
