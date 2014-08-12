@@ -29,8 +29,6 @@
         (cons n x)
         (cons n (alloc-help-2 (+ n 1) (cdr x))))))   
 
-(define wait-queues '())
-
 ;;queue
 (define the-ready-queue '())
 (define the-final-answer '())
@@ -250,8 +248,6 @@
    (exps (list-of expression?)))
   (spwan-exp 
    (exp1 expression?))
-  (kill-exp
-   (exp1 expression?))
   (proc-exp 
    (vars (list-of symbol?))
    (exp1 expression?))
@@ -336,9 +332,6 @@
      ("spawn" "(" expression ")")
      spwan-exp)
     (expression
-     ("kill" "(" expression ")")
-     kill-exp)
-    (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
      proc-exp)
     (expression
@@ -414,8 +407,6 @@
    (env environment?)
    (cont continuation?))
   (spwan-cont
-   (cont continuation?))
-  (kill-cont
    (cont continuation?))
   (rator-cont
    (rands (list-of expression?))
@@ -540,8 +531,6 @@
                                                 (end-sub-thread-cont)))
                            new-id)
                           (apply-cont saved-cont (num-val new-id))))
-            (kill-cont (saved-cont)
-                      '())
             
             (rator-cont (rands env cont)
                         (if (null? rands)
@@ -662,7 +651,6 @@
     (initialize-scheduler! timeslice)
     (set! th-ids '())
     (set! cur-th-id (alloc-new-id))
-    (set! wait-queues '())
     (cases program pgm
       (a-program (exp1)
                  (value-of/k exp1 (init-env) (end-main-thread-cont))))))
@@ -730,8 +718,6 @@
                (value-of/k (car exps) env (beg-cont (cdr exps) env cont)))
       (spwan-exp (exp1)
                  (value-of/k exp1 env (spwan-cont cont)))
-      (kill-exp (exp1)
-                (value-of/k exp1 env (kill-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rands)
@@ -823,20 +809,20 @@
 ;              spawn((incrx 300))
 ;            end"
 ;     1)
-;(run "let x = 3
-;      in  let mut = mutex()
-;          in let incrx = proc (id)
-;                           proc (dummy)
-;                             begin 
-;                               wait(mut);
-;                               set x = -(x,1);
-;                               print(x);
-;                               signal(mut)
-;                             end
-;             in begin
-;                  spawn((incrx 100));
-;                  spawn((incrx 200));
-;                  spawn((incrx 300))
-;                end"
-;     1)
+(run "let x = 3
+      in  let mut = mutex()
+          in let incrx = proc (id)
+                           proc (dummy)
+                             begin 
+                               wait(mut);
+                               set x = -(x,1);
+                               print(x);
+                               signal(mut)
+                             end
+             in begin
+                  spawn((incrx 100));
+                  spawn((incrx 200));
+                  spawn((incrx 300))
+                end"
+     1)
 
