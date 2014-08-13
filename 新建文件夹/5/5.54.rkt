@@ -29,11 +29,14 @@
         (cons n x)
         (cons n (alloc-help-2 (+ n 1) (cdr x))))))   
 
+
+
 ;;queue
 (define the-ready-queue '())
 (define the-final-answer '())
 (define the-max-time-slice '())
 (define the-time-remaining '())
+(define wait-queues '())
 
 (define empty-queue
   (lambda () '()))
@@ -79,8 +82,47 @@
 (define decrement-timer!
   (lambda ()
     (set! the-time-remaining (- the-time-remaining 1))))
-
-
+(define del-in-queues 
+  (lambda (id)
+    (let ((a (del-in-ready id the-ready-queue))
+          (b (del-in-wait id wait-queues)))
+      (if a 
+          (set! the-ready-queue (del-in-list the-ready-queue
+                                                   (lambda (x) (= id (cdr x)))))
+          '())
+      (or a b))))
+(define del-in-ready
+  (lambda (id queue)
+    (if (null? queue)
+        #f
+        (begin 
+          (if (= (cdr (car queue)) id)
+              #t
+              (del-in-ready id (cdr queue)))))))
+(define del-in-wait
+  (lambda (id queue)
+    (let ((op (lambda (x)
+                (cases mutex x
+                  (a-mutex (ref-to-closed? ref-to-wait-queue)
+                          (let ((wait-queue (deref ref-to-wait-queue)))                                  
+                            (setref! ref-to-wait-queue
+                                     (del-in-list wait-queue 
+                                                  (lambda (x) (= id (cdr x)))))
+                            (del-in-ready id wait-queue)))))))
+      (redu (map op queue)))))
+(define redu
+  (lambda (x)
+    (if (null? x)
+        #f
+        (or (car x) (redu (cdr x))))))
+(define del-in-list
+  (lambda (queue op)
+    (if (null? queue)
+        '()
+        (if (op (car queue))
+            (cdr queue)
+            (cons (car queue) (del-in-list (cdr queue) op))))))
+ 
 
 
 ;;store
@@ -248,6 +290,8 @@
    (exps (list-of expression?)))
   (spwan-exp 
    (exp1 expression?))
+  (kill-exp
+   (exp1 expression?))
   (proc-exp 
    (vars (list-of symbol?))
    (exp1 expression?))
@@ -332,6 +376,9 @@
      ("spawn" "(" expression ")")
      spwan-exp)
     (expression
+     ("kill" "(" expression ")")
+     kill-exp)
+    (expression
      ("proc" "(" (separated-list identifier ",") ")" expression)
      proc-exp)
     (expression
@@ -407,6 +454,8 @@
    (env environment?)
    (cont continuation?))
   (spwan-cont
+   (cont continuation?))
+  (kill-cont
    (cont continuation?))
   (rator-cont
    (rands (list-of expression?))
@@ -527,10 +576,18 @@
                           (place-on-ready-queue!
                            (lambda ()
                              (apply-procedure/k proc1
-                                                (list (num-val 28))
+                                                (list (num-val new-id))
                                                 (end-sub-thread-cont)))
                            new-id)
                           (apply-cont saved-cont (num-val new-id))))
+            (kill-cont (saved-cont)
+                       (let ((kill-id (expval->num val)))
+                         (if (= kill-id cur-th-id)
+                             (begin 
+                               (del-id cur-th-id)
+                               (run-next-thread))
+                             (apply-cont saved-cont (bool-val (del-in-queues kill-id))))))
+                             
             
             (rator-cont (rands env cont)
                         (if (null? rands)
@@ -651,6 +708,7 @@
     (initialize-scheduler! timeslice)
     (set! th-ids '())
     (set! cur-th-id (alloc-new-id))
+    (set! wait-queues '())
     (cases program pgm
       (a-program (exp1)
                  (value-of/k exp1 (init-env) (end-main-thread-cont))))))
@@ -685,7 +743,9 @@
       (print-exp (exp1)
                  (value-of/k exp1 env (print-cont cont)))
       (mutex-exp ()
-                 (apply-cont cont (mutex-val (new-mutex))))
+                 (let ((temp (new-mutex)))
+                   (set! wait-queues (cons temp wait-queues))
+                   (apply-cont cont (mutex-val temp))))
       (wait-exp (exp1)
                 (value-of/k exp1 env (wait-cont cont)))
       (signal-exp (exp1)
@@ -718,6 +778,8 @@
                (value-of/k (car exps) env (beg-cont (cdr exps) env cont)))
       (spwan-exp (exp1)
                  (value-of/k exp1 env (spwan-cont cont)))
+      (kill-exp (exp1)
+                (value-of/k exp1 env (kill-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
       (call-exp (rator rands)
@@ -809,11 +871,33 @@
 ;              spawn((incrx 300))
 ;            end"
 ;     1)
-(run "let x = 3
+;(run "let x = 3
+;      in  let mut = mutex()
+;          in let incrx = proc (id)
+;                           proc (dummy)
+;                             begin 
+;                               wait(mut);
+;                               set x = -(x,1);
+;                               print(x);
+;                               signal(mut)
+;                             end
+;             in begin
+;                  spawn((incrx 100));
+;                  spawn((incrx 200));
+;                  spawn((incrx 300))
+;                end"
+;     1)
+(run "let x  = 3
       in  let mut = mutex()
           in let incrx = proc (id)
                            proc (dummy)
-                             begin 
+                             begin
+                               if zero?(-(dummy,2))
+                               then begin
+                                     kill(3);
+                                     kill(0)
+                                    end
+                               else 1;
                                wait(mut);
                                set x = -(x,1);
                                print(x);
@@ -822,7 +906,8 @@
              in begin
                   spawn((incrx 100));
                   spawn((incrx 200));
-                  spawn((incrx 300))
+                  spawn((incrx 300));
+                  print(42);
+                  print(41)
                 end"
      1)
-
