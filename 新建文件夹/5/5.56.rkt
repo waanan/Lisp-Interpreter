@@ -34,6 +34,9 @@
 (define the-final-answer '())
 (define the-max-time-slice '())
 (define the-time-remaining '())
+(define the-send-queue '())
+(define the-get-queue '())
+
 
 (define empty-queue
   (lambda () '()))
@@ -205,6 +208,10 @@
    (exp1 expression?))
   (signal-exp
    (exp1 expression?))
+  (send-exp
+   (exp1 expression?)
+   (exp2 expression?))
+  (get-exp)
   (null?-exp
    (exp1 expression?))
   (cons-exp
@@ -251,6 +258,9 @@
   (proc-exp 
    (vars (list-of symbol?))
    (exp1 expression?))
+  (prox-exp 
+   (vars (list-of symbol?))
+   (exp1 expression?))
   (call-exp
    (rator expression?)
    (rands (list-of expression?))))
@@ -280,6 +290,12 @@
     (expression
      ("signal" "(" expression ")")
      signal-exp)
+    (expression
+     ("send" expression "to" expression)
+     send-exp)
+    (expression
+     ("get" "(" ")")
+     get-exp)
     (expression
      ("emptylist")
      null-exp)
@@ -335,6 +351,9 @@
      ("proc" "(" (separated-list identifier ",") ")" expression)
      proc-exp)
     (expression
+     ("prox" "(" (separated-list identifier ",") ")" expression)
+     prox-exp)
+    (expression
      ("(" expression (arbno expression) ")")
      call-exp)))
 (define just-scan
@@ -357,6 +376,13 @@
   (wait-cont
    (cont continuation?))
   (signal-cont
+   (cont continuation?))
+  (send1-cont
+   (exp1 expression?)
+   (env environment?)
+   (cont continuation?))
+  (send2-cont
+   (val1 expval?)
    (cont continuation?))
   (car-cont
    (cont continuation?))
@@ -425,7 +451,6 @@
           (place-on-ready-queue!
            (lambda () (apply-cont cont val))
            cur-th-id)
-;          (display th-ids)
           (run-next-thread))
         (begin 
           (decrement-timer!)
@@ -456,6 +481,10 @@
                          (signal-mutex
                           (expval->mutex val)
                           (lambda () (apply-cont saved-cont (num-val 53)))))
+            (send1-cont (exp1 saved-env saved-cont)
+                        (value-of/k exp1 saved-env (send2-cont val saved-cont)))
+            (send2-cont (val1 saved-cont)
+                        (send-mes val1 val saved-cont))
             (car-cont (saved-cont)
                       (let ((lst (expval->ls val)))
                         (cases ls lst
@@ -527,7 +556,7 @@
                           (place-on-ready-queue!
                            (lambda ()
                              (apply-procedure/k proc1
-                                                (list (num-val 28))
+                                                (list (num-val new-id))
                                                 (end-sub-thread-cont)))
                            new-id)
                           (apply-cont saved-cont (num-val new-id))))
@@ -553,7 +582,61 @@
 (define list-help
   (lambda (expvals)
     (list-iter expvals (ls-val (null-val)))))
-
+(define send-mes
+  (lambda (val1 val2 saved-cont)
+    (let ((n (expval->num val2)))
+      (if (id-in-queue? n the-get-queue)
+          (set! the-get-queue
+                (del-in-get-list the-get-queue
+                                 (lambda (x) (= n (cdr x)))
+                                 (lambda (x)
+                                   (lambda ()
+                                     (apply-cont x val1)))))
+          (set! the-send-queue (cons (cons val1 n) the-send-queue)))
+      (apply-cont saved-cont (num-val 100)))))
+(define get-mes
+  (lambda (saved-cont)
+    (if (id-in-queue? cur-th-id the-send-queue)
+        (let ((val (del-in-send2 the-send-queue (lambda (x) (= cur-th-id (cdr x))))))
+          (set! the-send-queue (del-in-send the-send-queue (lambda (x) (= cur-th-id (cdr x)))))
+          (apply-cont saved-cont val))
+        (begin 
+          (set! the-get-queue (cons (cons saved-cont cur-th-id) the-get-queue))
+          (run-next-thread)))))
+(define id-in-queue?
+  (lambda (n queue)
+    (cond ((null? queue)
+           #f)
+          ((= (cdr (car queue)) n)
+           #t)
+          (else
+            (id-in-queue? n (cdr queue))))))
+(define del-in-send
+  (lambda (queue op)
+    (if (null? queue)
+        '()
+        (if (op (car queue))
+            (cdr queue)
+            (cons (car queue) (del-in-send (cdr queue) op))))))
+(define del-in-send2
+  (lambda (queue op)
+    (if (null? queue)
+        '()
+        (if (op (car queue))
+            (car (car queue))
+            (del-in-send2 (cdr queue) op)))))
+(define del-in-get-list
+  (lambda (queue op1 op2)
+    (if (null? queue)
+        '()
+        (if (op1 (car queue))
+            (begin
+              (place-on-ready-queue!
+               (op2 (car (car queue))) 
+               (cdr (car queue)))
+              (cdr queue))
+            (cons (car queue) (del-in-get-list (cdr queue) op1 op2))))))         
+           
 (define wait-for-mutex
   (lambda (m th)
     (cases mutex m
@@ -649,6 +732,8 @@
   (lambda (pgm timeslice)
     (initialize-store!)
     (initialize-scheduler! timeslice)
+    (set! the-send-queue '())
+    (set! the-get-queue '())
     (set! th-ids '())
     (set! cur-th-id (alloc-new-id))
     (cases program pgm
@@ -690,6 +775,10 @@
                 (value-of/k exp1 env (wait-cont cont)))
       (signal-exp (exp1)
                   (value-of/k exp1 env (signal-cont cont)))
+      (send-exp (exp1 exp2)
+                (value-of/k exp1 env (send1-cont exp2 env cont)))
+      (get-exp ()
+               (get-mes cont))
       (diff-exp (exp1 exp2)
                 (value-of/k exp1 env 
                             (diff1-cont exp2 env cont)))
@@ -706,7 +795,7 @@
                (if (null? vars)
                    (apply-cont cont body)
                    (value-of/k (car exps) env 
-                               (let-exp-cont (car vars) vars exps body env env cont))))
+                               (let-exp-cont (car vars) (cdr vars) exps body env env cont))))
       (letrec-exp (p-name b-vars body letrec-body)
                   (value-of/k
                    letrec-body 
@@ -720,6 +809,8 @@
                  (value-of/k exp1 env (spwan-cont cont)))
       (proc-exp (vars body)
                 (apply-cont cont (proc-val (procedure vars body env))))
+      (prox-exp (vars body)
+                (apply-cont cont (proc-val (procedure vars body (empty-env)))))
       (call-exp (rator rands)
                 (value-of/k rator env
                             (rator-cont rands env cont))))))
@@ -809,20 +900,63 @@
 ;              spawn((incrx 300))
 ;            end"
 ;     1)
+;(run "let x = 3
+;      in  let mut = mutex()
+;          in let incrx = proc (id)
+;                           proc (dummy)
+;                             begin 
+;                               wait(mut);
+;                               set x = -(x,1);
+;                               print(x);
+;                               signal(mut)
+;                             end
+;             in begin
+;                  spawn((incrx 100));
+;                  spawn((incrx 200));
+;                  spawn((incrx 300))
+;                end"
+;     1)
+;(run "begin
+;        spawn(prox (x) send 5 to 2);
+;        spawn(prox (x) print(-(5,get())))
+;      end"
+;     4)
+;(run "begin
+;        spawn(prox (x) print(-(5,get())));
+;        spawn(prox (x) send 5 to 1)
+;      end"
+;     2)
+;(run "let x = 3
+;      in begin
+;           send x to 2;
+;           spawn(prox (id) send -(get(),1) to 3);
+;           spawn(prox (id) send -(get(),1) to 1);
+;           spawn(prox (id) send -(get(),1) to 0);
+;           print(get())
+;         end"
+;     5)
 (run "let x = 3
-      in  let mut = mutex()
-          in let incrx = proc (id)
-                           proc (dummy)
-                             begin 
-                               wait(mut);
-                               set x = -(x,1);
-                               print(x);
-                               signal(mut)
-                             end
-             in begin
-                  spawn((incrx 100));
-                  spawn((incrx 200));
-                  spawn((incrx 300))
-                end"
-     1)
-
+      in begin
+           send x to 2;
+           spawn(prox (id) let x = 1
+                           in begin 
+                                set x = -(get(),1);
+                                print(x);
+                                send x to 3
+                              end);
+           spawn(prox (id) let x = get()
+                           in begin
+                                print(x);
+                                set x = -(x,1);
+                                print(x);
+                                send x to 1
+                              end);
+           spawn(prox (id) let x = 3
+                           in begin
+                                set x = -(get(),1);
+                                print(x);
+                                send x to 0
+                              end);
+           print(get())
+         end"
+     2)
