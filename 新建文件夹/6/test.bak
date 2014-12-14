@@ -1,0 +1,39 @@
+#lang racket
+
+(require "tailform.rkt")
+
+(define (cps-of-simple-exp exp)
+  (cond ((or (number? exp)
+             (boolean? exp)
+             (symbol? exp)
+             (eq? (car exp) '-)
+             (eq? (car exp) 'zero?))
+         exp)
+        ((eq? (car exp) 'proc)
+         (let ((k (gensym)))
+           (list k-exp (list 'proc (append (cadr exp) (list k)) (cps-of-exp (caddr exp) k)))))
+        ((eq? (car exp) 'sum)
+         (append 'sum (map cps-of-simple-exp (cdr exp))))))
+
+(define (cps-of-exps exps builder)
+  
+  
+
+(define (cps-of-exp exp k-exp)
+  (cond ((number? exp) (list k-exp exp))
+        ((boolean? exp) (list k-exp exp))
+        ((symbol? exp) (list k-exp exp))
+        ((eq? (car exp) 'proc) 
+         (let ((k (gensym)))
+           (list k-exp (list 'proc (append (cadr exp) (list k)) (cps-of-exp (caddr exp) k)))))
+        ((eq? (car exp) 'zero?) 
+         (cps-of-zero?-exp (cdr exp) k-exp))
+         
+         (zero? (value-of-simple-exp (cadr exp) env)))
+        ((eq? (car exp) '-) 
+         (- (value-of-simple-exp (cadr exp) env)
+                               (value-of-simple-exp (caddr exp) env)))
+        ((eq? (car exp) 'sum) (apply + (map (lambda (x) (value-of-simple-exp x env)) (cdr exp))))
+        
+(define (cps-of-zero?-exp exp k-exp)
+  
