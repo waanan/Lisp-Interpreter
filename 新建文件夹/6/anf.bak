@@ -97,6 +97,7 @@
          (vals-exps (map cadr bindings)))
     (cps-of-exps vals-exps (lambda (simples) 
                              (list 'let (map list vars simples) (cps-of-exp body k-exp))))))
+;    (cps-of-exp (car vals-exps) (list 'proc (car vars) (cps-of-exp body proc-k)))))
 (define (cps-of-letrec-exp bindings body k-exp)  
   (let* ((p-names (map car bindings))
          (p-varss (map cadr bindings))

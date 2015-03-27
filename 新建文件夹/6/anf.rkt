@@ -2,10 +2,12 @@
 
 (require "tailform.rkt")
 
-(define proc-k (gensym))
+(define proc-k '())
+(define cps-of-exps '())
+(define cps-of-exp '())
 
-(define (cps-of-program pgm)
-  (cps-of-exps (list pgm) (lambda (simples) (car simples))))
+(define (anf-of-program pgm)
+  (anf-of-exp pgm))
 
 (define (cps-of-simple-exp exp)
   (cond ((or (number? exp)
@@ -18,7 +20,7 @@
         ((eq? (car exp) 'zero?)
          (list 'zero? (cps-of-simple-exp (cadr exp))))
         ((eq? (car exp) 'proc)
-           (list 'proc (append (cadr exp) (list proc-k)) (cps-of-exp (caddr exp) proc-k)))
+         (list 'proc (append (cadr exp) (list proc-k)) (cps-of-exp (caddr exp) proc-k)))
         ((eq? (car exp) 'sum)
          (cons 'sum (map cps-of-simple-exp (cdr exp))))
         (else (display "EXP Invalid While cps-of-simple-exp!\n"))))
@@ -38,46 +40,45 @@
       (cons x (cdr lst))
       (cons (car lst)(list-set (cdr lst) (- n 1) x))))
 
-(define (cps-of-exps exps builder)
+(define (anf-of-exps exps builder)
   (let ((pos (list-index (lambda (exp) (not (simple-exp? exp))) exps)))
     (if (not pos)
-        (builder (map cps-of-simple-exp exps))
+        (builder (map anf-of-exp exps))
         (let ((k (gensym)))
-          (cps-of-exp (list-ref exps pos)
-                      (list 'proc (list k) 
-                            (cps-of-exps (list-set exps pos k) builder)))))))
-  
-  
+          (list 'let (list (list k (anf-of-exp (list-ref exps pos))))
+                (anf-of-exps (list-set exps pos k) builder))))))
 
-(define (cps-of-exp exp k-exp)
-  (cond ((number? exp) (list k-exp exp))
-        ((boolean? exp) (list k-exp exp))
-        ((symbol? exp) (list k-exp exp))
+
+
+(define (anf-of-exp exp)
+  (cond ((number? exp) exp)
+        ((boolean? exp) exp)
+        ((symbol? exp) exp)
         ((eq? (car exp) 'proc) 
-           (list k-exp (list 'proc (append (cadr exp) (list proc-k)) (cps-of-exp (caddr exp) proc-k))))
+         (list 'proc (cadr exp) (anf-of-exp (caddr exp))))
         ((eq? (car exp) 'zero?) 
-         (cps-of-zero?-exp (cdr exp) k-exp))
-        ((eq? (car exp) '-) 
-         (cps-of-diff-exp (cadr exp) (caddr exp) k-exp))
-        ((eq? (car exp) 'sum)
-         (cps-of-sum-exp (cdr exp) k-exp))
-        ((eq? (car exp) 'if)
-         (cps-of-if-exp (cadr exp) (caddr exp) (cadddr exp) k-exp))
+         (anf-of-zero?-exp (cdr exp)))
+        ;        ((eq? (car exp) '-) 
+        ;         (cps-of-diff-exp (cadr exp) (caddr exp)))
+        ;        ((eq? (car exp) 'sum)
+        ;         (cps-of-sum-exp (cdr exp)))
+        ;        ((eq? (car exp) 'if)
+        ;         (cps-of-if-exp (cadr exp) (caddr exp) (cadddr exp)))
         ((eq? (car exp) 'let)
-         (cps-of-let-exp (cadr exp) (caddr exp) k-exp))
-        ((eq? (car exp) 'letrec)
-         (cps-of-letrec-exp (cadr exp) (caddr exp) k-exp))
+         (anf-of-let-exp (cadr exp) (caddr exp)))
+        ;        ((eq? (car exp) 'letrec)
+        ;         (cps-of-letrec-exp (cadr exp) (caddr exp) k-exp))
         (else 
-         (cps-of-call-exp exp k-exp))
+         (anf-of-call-exp exp))
         ))
-      
 
-(define (cps-of-call-exp exp k-exp)
-  (cps-of-exps exp (lambda (simples) (append simples (list k-exp)))))
-(define (cps-of-zero?-exp exp k-exp)
-  (cps-of-exps exp
+
+(define (anf-of-call-exp exp)
+  (anf-of-exps exp (lambda (simples) simples)))
+(define (anf-of-zero?-exp exp)
+  (anf-of-exps exp
                (lambda (simples)
-                 (list k-exp (list 'zero? (car simples))))))
+                 (list 'zero? (car simples)))))
 (define (cps-of-diff-exp exp1 exp2 k-exp)
   (cps-of-exps (list exp1 exp2)
                (lambda (simples)
@@ -89,15 +90,15 @@
                (lambda (simples)
                  (let ((k (gensym)))
                    (list 'let (list (list k k-exp))
-                                     (list 'if (car simples)
-                                           (cps-of-exp exp2 k)
-                                           (cps-of-exp exp3 k)))))))
-(define (cps-of-let-exp bindings body k-exp)
+                         (list 'if (car simples)
+                               (cps-of-exp exp2 k)
+                               (cps-of-exp exp3 k)))))))
+(define (anf-of-let-exp bindings body)
   (let* ((vars (map car bindings))
          (vals-exps (map cadr bindings)))
-;    (cps-of-exps vals-exps (lambda (simples) 
-;                             (list 'let (map list vars simples) (cps-of-exp body k-exp))))))
-    (cps-of-exp (car vals-exps) (list 'proc (car vals) (cps-of-exp body proc-k)))
+    (anf-of-exps vals-exps (lambda (simples) 
+                             (list 'let (map list vars simples) (anf-of-exp body))))))
+;    (cps-of-exp (car vals-exps) (list 'proc (car vars) (cps-of-exp body proc-k)))))
 (define (cps-of-letrec-exp bindings body k-exp)  
   (let* ((p-names (map car bindings))
          (p-varss (map cadr bindings))
@@ -105,10 +106,9 @@
     (list 'letrec (map list p-names (map (lambda (vars) (append vars (list proc-k))) p-varss)
                        (map (lambda (exp) (cps-of-exp exp proc-k)) p-bodies))
           (cps-of-exp body k-exp))))
-         
-         
-         
-         
-         
-         
-  
+
+
+
+
+
+
