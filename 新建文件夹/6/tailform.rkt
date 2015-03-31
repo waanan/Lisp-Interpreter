@@ -1,6 +1,5 @@
 #lang racket
-
-(provide run simple-exp?)
+(provide run simple-exp? every?)
 (define (simple-exp? exp)
   (or (number? exp)
       (boolean? exp)

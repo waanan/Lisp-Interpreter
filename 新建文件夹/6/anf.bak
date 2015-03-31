@@ -5,7 +5,7 @@
 (define proc-k (gensym))
 
 (define (cps-of-program pgm)
-  (cps-of-exps (list pgm) (lambda (simples) (car simples))))
+  (anf-of-exps (list pgm) (lambda (simples) (car simples))))
 
 (define (cps-of-simple-exp exp)
   (cond ((or (number? exp)
@@ -38,14 +38,13 @@
       (cons x (cdr lst))
       (cons (car lst)(list-set (cdr lst) (- n 1) x))))
 
-(define (cps-of-exps exps builder)
+(define (anf-of-exps exps builder)
   (let ((pos (list-index (lambda (exp) (not (simple-exp? exp))) exps)))
     (if (not pos)
         (builder (map cps-of-simple-exp exps))
         (let ((k (gensym)))
-          (cps-of-exp (list-ref exps pos)
-                      (list 'proc (list k) 
-                            (cps-of-exps (list-set exps pos k) builder)))))))
+          (list 'let (list k (list-ref exps pos))
+                (anf-of-exps (list-set exps pos k) builder))))))
   
   
 
@@ -73,7 +72,7 @@
       
 
 (define (cps-of-call-exp exp k-exp)
-  (cps-of-exps exp (lambda (simples) (append simples (list k-exp)))))
+  (anf-of-exps exp (lambda (simples) (append simples (list k-exp)))))
 (define (cps-of-zero?-exp exp k-exp)
   (cps-of-exps exp
                (lambda (simples)
@@ -112,3 +111,9 @@
          
          
   
+
+
+
+
+
+
