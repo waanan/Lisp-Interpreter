@@ -4,7 +4,7 @@
 
 (define proc-k (gensym))
 
-(define (cps-of-program pgm)
+(define (anf-of-program pgm)
   (anf-of-exps (list pgm) (lambda (simples) (car simples))))
 
 (define (new-simple-exp? exp)
@@ -55,9 +55,10 @@
   (let ((pos (list-index (lambda (exp) (not (simple-exp? exp))) exps)))
     (if (not pos)
         (builder (map anf-of-simple-exp exps))
-        (let ((k (gensym)))
-          (if simple
-          (list 'let (list k (list-ref exps pos))
+        (let ((k (gensym))
+              (k1 (list-ref exps pos)))
+          (if (new-simple-exp? k1)
+          (list 'let (list k )
                 (anf-of-exps (list-set exps pos k) builder))))))
   
   
