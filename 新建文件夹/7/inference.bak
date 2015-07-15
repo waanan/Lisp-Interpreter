@@ -1,0 +1,9 @@
+#lang racket
+
+(define apply-one-subst
+  (lambda (ty0 tvar ty1)
+    (cond ((eq? ty0 'int) 'int)
+          ((eq? ty0 'bool) 'bool)
+          ((pair? ty0) (cons (apply-one-subst (car ty0) tvar ty1)
+                             (apply-one-subst (cdr ty0) tvar ty1)))
+          (else (if (= ty0 tvar) ty1 ty0)))))
